@@ -1,0 +1,41 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_town.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('town.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+
+typedef struct {
+    uint32 pad0;
+    uint32 pad1;
+    // 每个城镇有3个背景音频
+    uint32 sound1;
+    uint32 sound1sleep;
+    uint32 sound1stop;
+    uint32 sound2;
+    uint32 sound2sleep;
+    uint32 sound2stop;
+    uint32 sound3;
+    uint32 sound3sleep;
+    uint32 sound3stop;
+    // 名称分别是 "民房","指挥部","军械部","杂货铺","出口","作坊"
+    uint32 name_x[6];
+    uint32 name_y[6];
+    uint32 offest_x[6];
+    uint32 offset_y[6];
+    uint32 pad15[10];   // 这个地方才应该是材料，但是代码里没有使用，设计和编码人员失误了？！
+    uint32 wupin_junxie[12];   // 12 个可卖的军械物品
+    uint32 wupin_zahuo[12];   // 12 个可卖的杂货物品
+    uint32 material[12];   // 12 个可卖的材料
+
+    ushort  dat2[11];   // 设计的比较奇怪，感觉没用到
+} Town;
+Town town[19];

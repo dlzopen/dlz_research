@@ -1,0 +1,27 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_flm.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('flm.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-15 first version
+//------------------------------------------------
+
+// 分辨率48*48的图片，0为透明色，共32个动画序列。每个动画16帧。
+
+typedef struct  {
+    typedef struct {
+        typedef struct {
+            char line[48];
+        } Line;
+        Line line[48];
+    } Tile;
+    Tile tile[0x10];
+}FLM;
+
+FLM flm[0x20];

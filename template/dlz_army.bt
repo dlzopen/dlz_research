@@ -1,0 +1,23 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_army.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('army.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率48*48，每个兵种19帧，共91个兵种
+
+typedef struct {
+    struct Aminate {
+        char item[2304];
+    } aminate[19];
+}Army;
+
+Army army[91];

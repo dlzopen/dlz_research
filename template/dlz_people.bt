@@ -1,0 +1,74 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_people.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('people.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 孙悟空, 孙悟空, 朱老忠, 赵　虎, 张　嘎, 李向阳, 史更新, 兰　姑
+// 柳　忻, 肖　飞, 李霜泗, 张长庚, 九　爷, 雷石柱, 林　嫂, 雨　来
+// 赵勇刚, 魏　强, 刘　洪, 鲁　汉, 康伯充, 吴　海, 郑之光, 金花婆
+// 方仲雄, 向天虎, 向天豹, 黄成杰, 田大山, 杨铁山, 周　亮, 陈怀忠
+// 唐联西, 傅正明, 李　正, 彼　德, 钱宇森, 村　民, 村　民, 村　民
+// 游击队员
+
+typedef struct {
+    typedef struct {
+        char name[0x10];  // 名字
+        uint32 face;    // 头像索引
+        uint32 pad2;
+        uint32 enemy;   // 0 我方；1 敌方 和 fight.fighter.p15共同完成判断
+        uint32 wuli;    // 武力
+        uint32 zhili;   // 智力
+        uint32 level;   // 人物等级
+        uint32 jingyan; // 经验
+        uint32 bingzhong;// 兵种
+        uint32 gongji;  // 攻击
+        uint32 buji;    // 补给
+        uint32 jili;    // 激励
+        uint32 yiliao;  // 医疗
+        uint32 huogong; // 火攻
+        uint32 gunmu;   // 滚木
+        uint32 leishi;  // 擂石
+        uint32 weishe;  // 威慑
+        uint32 saorao;  // 骚扰
+        uint32 pohuai;  // 破坏
+        uint32 lueduo;  // 掠夺
+        uint32 fanjian; // 反间
+        uint32 yibing;  // 疑兵
+        uint32 duzhan;  // 督战
+        uint32 ansha;   // 暗杀
+        uint32 shidu;   // 施毒
+        uint32 kongxi;  // 空袭
+    
+        byte   wupin[8];// 物品
+        byte   dilei[8];// 地雷
+    }People <read=ReadPeople>;
+    People people[40];
+} ThePeople <read=ReadThePeople>;
+
+string ReadPeople( People &p )
+{
+    string s;
+    SPrintf( s, "%s<%d>", p.name, p.enemy);
+    return s;
+}
+
+string ReadThePeople(ThePeople &p )
+{
+    string s=p.people[0].name;
+    local int i;
+    for(i== 0; i < 40; i++) {
+        SPrintf( s, "%s, %s", s, p.people[i].name);
+    }
+    return s;
+}
+
+ThePeople p;

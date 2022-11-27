@@ -1,0 +1,21 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_face.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('face.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率80 * 100，共170，没有调色板
+
+typedef struct {
+    uchar buf[0x1f40];
+} Face;
+
+Face face[170];

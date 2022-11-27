@@ -1,0 +1,23 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_place.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('place.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率640*480 共19个
+
+typedef struct {
+    uchar scene_buffer[640*480];
+    uchar scene_palette[0x400];
+}Secene;
+
+// 一共19个场景
+Secene secene[19];

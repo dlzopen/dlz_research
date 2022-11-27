@@ -1,0 +1,54 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_blk.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('blk.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率48*48
+// 战斗场景的塔图
+
+typedef struct {
+
+    typedef struct {
+        uchar buf[48*48];
+    } Item;
+
+    typedef struct {
+        uint32 offset;
+        uint32 length;
+    } Index <read=ReadIndex>;
+
+    
+    Index index[0x40];
+    local int i = 0;
+    local int size = 0;
+    while(i < 0x40) {
+        size = 0;
+        while( size < index[i].length) {
+            Item item;
+            size = size + 48 * 48;
+        }
+        i = i+1;
+    }
+}BLK;
+
+string ReadIndex(Index &i)
+{
+    if(i.length == 0)
+        return "---";
+    else {
+        string s;
+        SPrintf( s, "16 * %d", i.length / 48 / 48 / 16);
+        return s;
+    }
+}
+
+BLK blk;

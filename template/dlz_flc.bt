@@ -1,0 +1,86 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_flc.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('*.flc')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-17 first version
+//------------------------------------------------
+
+// 这是一个早期的视频文件格式。有点复杂啊。恐怕一两天写不完，
+// 放弃，标准格式不写模板文件
+
+typedef enum<WORD>
+{
+    FLI_FLI  = 0xAF11,
+    FLI_FLC  = 0xAF12,
+} FLC_TYPE <comment="WORD">;
+
+typedef enum<WORD>
+{
+    FLI_COLOR256 = 4,
+    FLI_SS2      = 7,
+    FLI_COLOR    = 11,
+    FLI_LC       = 12,
+    FLI_BLACK    = 13,
+    FLI_BRUN     = 15,
+    FLI_COPY     = 16,
+    FLI_PSTAMP   = 18,
+} CHUNK_TYPE <comment="WORD">;
+
+typedef struct {
+    int32 size;
+    FLC_TYPE type;
+    ushort num_frame;
+    ushort width;
+    ushort height;
+    ushort depth;
+    ushort flags;
+    if(type == FLI_FLI) {
+        ushort delay;
+        char foo[110];
+    } else if(type == FLI_FLC) {
+        uint delay;
+        char foo[108];
+    } 
+}Header;
+
+typedef struct {
+    uchar r;
+    uchar g;
+    uchar b;
+}RGB;
+
+typedef struct {
+    uint32 size;
+    uint16 type;
+    uint16 chunk_num;
+    char   foo[8];
+
+    typedef struct {
+        uint32 size;
+        CHUNK_TYPE type;
+        switch(type) {
+            case FLI_COLOR256:
+                uint16 numpackets;
+                local int index_ = 0;
+                uchar index;        // 跳跃表的意思？！
+                index_ += index;
+                uchar color_num;
+                local int color_num_ = color_num == 0? 256:color_num;
+                RGB rgb[color_num_];
+                break;
+        }
+    } Chunk;
+
+    Chunk chunks[chunk_num];
+}Frame;
+
+Header header;
+Frame frame[header.num_frame];
+

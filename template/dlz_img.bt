@@ -1,0 +1,38 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_img.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the files with suffix img
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:  v0.1 2022-4-14 first version
+//------------------------------------------------
+
+typedef struct {
+    uchar r;
+    uchar g;
+    uchar b;
+} RGB <read=ReadRGB>;
+
+string ReadRGB(RGB &rgb)
+{
+    string s;
+    SPrintf( s, "%d,%d,%d", rgb.r, rgb.g, rgb.b);
+    return s;
+}
+
+struct IMG {
+    uint32 MAGIC;         // 程序不读这个字段
+    uint16 pad1;          // 程序不读这个字段
+    uint16 width;
+    uint16 height;
+    uint16 pad2;          // 程序不读这个字段
+    uint32 pad3;          // 程序不读这个字段
+    uchar  bytes[(width+1)*(height+1)];
+    RGB  colors[0x100];
+};
+
+IMG img;

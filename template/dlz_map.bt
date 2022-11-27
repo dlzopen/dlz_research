@@ -1,0 +1,71 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_map.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('map.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+local int64 colors[0x10] = {
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cDkGreen,
+    cGreen,
+    cLtGreen,
+    cLtGreen,
+    cLtGreen,
+    cLtGreen,
+    cLtGreen,
+    cNone
+};
+
+// typedef ushort MapData <read=ReadMapData, bgcolor=BgColorMapData>;
+// typedef ushort MapData <read=ReadMapData, bgcolor=(colors[int(this) >> 12])>;
+// typedef ushort MapData <read=ReadMapData>;
+
+
+typedef struct {
+    typedef struct {
+        uint32 offset; // 索引便宜
+        uint32 length; // 数据长度
+    } Index;
+
+    typedef struct {
+        ushort  width;   // 宽度
+        ushort  height;  // 高度
+        char    blkname[0xc]; // 指向的plk
+        char    palname[0xc]; // 指向的pal
+        ushort  buffer[width*height]<read=ReadBuffer, bgcolor=(colors[this[0]>>12])>; // 数据
+    } Data <read=ReadData, optimize=false>;
+
+    Index index[0x40];
+    Data data[47];
+} Map;
+
+string ReadBuffer(ushort d)
+{
+    string s;
+    SPrintf( s, "%d", d);
+    return s;
+}
+
+string ReadData(Data& m)
+{
+    string s;
+    SPrintf( s, "%c%c", m.blkname[4],m.blkname[5]);
+    return s;
+}
+
+Map map;

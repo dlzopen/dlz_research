@@ -1,0 +1,73 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: 
+//   Authors: 
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+typedef enum<DWORD> {
+    MAGICLPF = 0x2046504C,
+}MagicLPF;
+
+typedef enum<DWORD> {
+    MAGICANIM = 0x4D494E41,
+}MagicANIM;
+
+typedef enum<WORD> {
+    MAXPAGES = 0x0100,
+}MaxPages;
+
+typedef struct {
+    uint16 base_record;
+    uint16 nb_records;
+    uint16  size;
+}Page;
+
+typedef struct {
+    typedef struct {
+        MagicLPF magic; // LPF 
+        MaxPages maxpages;
+        if(magic != MAGICLPF) {
+            Warning("File is not a valid animate file. Template stopped.");
+            return -1;
+        }
+        if(maxpages != MAXPAGES) {
+            Warning("maxpages != 256. Template stopped.");
+            return -1;
+        }
+        ushort pages_num;
+        uint32 records_num;
+        ushort MAX_RECORDS_;
+        ushort page_table_offset;
+        MagicANIM magicAnim;
+        ushort width;
+        ushort height;
+        char   zero_;
+        uchar  rate;
+        uchar  has_last;
+        local  uint32 records_num_ = records_num;
+        if (has_last) {
+            records_num_ = records_num_ - 1;
+        }
+        uchar  last_valid;
+        uint32 skip_;
+        char   foo[32];
+        uint32 frames_num;
+        uint16 info;
+        char   foo2[58];
+        char   extra[16*8 + 4*256];
+        
+        Page   page[256];
+    }Header;
+    
+    Header header;
+    char foo;
+}ANM;
+
+ANM anm;

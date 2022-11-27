@@ -1,0 +1,19 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_mine.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('mine.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-17 first version
+//------------------------------------------------
+
+typedef struct {
+    char c[2304];
+}Mine;
+
+Mine min[40];

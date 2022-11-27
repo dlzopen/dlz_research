@@ -1,0 +1,237 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_game.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('game.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 这个枚举类型在数据中不存在，这是从硬编码里把出来的
+// 函数地址在0x4138EA
+typedef enum {
+    // formula1 = people_zhili[33 * people_index] * game_jineng_para1[12 * jineng_index] / 0x64u;
+    // formula1 = ((sub_419CA4(people_buji[33 * people_index + jineng_index]) + 7) * formula1) >> 3;
+    Formula1 = 1,
+    // formula2 = people_zhili[33 * people_index] * game_jineng_para2[12 * jineng_index] / 0x64u;
+    // formula2 = ((sub_419CA4(people_buji[33 * people_index + jineng_index]) + 7) * formula2) >> 3;
+    Formula2 = 2,
+    Formula3 = 3,
+    Formula4 = 4,
+} FormulaType;
+
+typedef enum<DWORD> {
+    // 在这里，地雷战设计有个BUG,不管它，执行结果是对的
+    // 体现在施毒和医疗技能上，设计上看着别扭，但是运行结果正确
+    // 参见 TILI_REM 解释 和 TILI_SHIQI_ADD
+
+    // 类型          数字     // 公式  成功率   说明
+    TILI_ADD      = 0,      // 公式一  100    增加体力
+    SHIQI_ADD     = 1,      // 公式二  100    增加士气
+    TILI_SHIQI_ADD= 2,      // 公式一二 100    增加体力士气
+    TILI_REM      = 3,      // 公式一 公式三   体力损失，如果参数二不为0，士气损失
+    SHIQI_REM     = 4,      // 公式二 公式三   士气损失
+    FANGYU_REM    = 5,      //       公式三   防御-70%
+    GONGJI_REM    = 6,      //       公式三   攻击-70%
+    ZHUANGBEI_REM = 7,      //       公式四   抢夺装备
+    GONGJI_DENGJI_REM = 8,  //       公式三   攻击等级-1
+    ATTACK_REM    = 9,      //       公式三   停止攻击1回合
+    ATTACK_RES    = 10,     //       公式三   恢复攻击
+} JiNengType;
+
+typedef struct {
+    uchar buji;             // 补给
+    uchar jili;             // 激励
+    uchar yiliao;           // 医疗
+    uchar huogong;          // 火攻
+    uchar gunmu;            // 滚木
+    uchar leishi;           // 擂石
+    uchar weishe;           // 威慑
+    uchar saorao;           // 骚扰
+    uchar pohuai;           // 破坏
+    uchar lueduo;           // 掠夺
+    uchar fanjian;          // 反间
+    uchar yibing;           // 疑兵
+    uchar duzhan;           // 督战
+    uchar ansha;            // 暗杀
+    uchar shidu;            // 施毒
+    uchar kongxi;           // 空袭
+}JiNengFlag;
+
+typedef struct {
+    // 10X16个矩阵，10种地雷可不可以在16种地形埋设？没注意过这个细节
+    // 地址4190E2，仅此位置对这个字段进行了使用
+    typedef struct {
+        uchar foo[0xA0];
+    }What0;
+
+    // 16X20的矩阵，各技能修正矩阵
+    // 地址4138EA
+    typedef struct {
+            int huogong;   // 火攻修正
+            int gunmu;     // 滚木修正
+            int fangyu;    // 防御修正
+            int tili;      // 体力修正
+            int shiqi;     // 士气修正
+    } DiXingModifier;
+
+    typedef struct {
+        char  name[0x10];
+        uint32 img_index;   // 图片索引,指向army索引
+        uint32 tili;        // 体力基础
+        uint32 tili_plus;   // 体力加成
+        uint32 gongji_plus; // 攻击加成
+        uint32 fangyu_plus; // 防御加成
+        uint32 yidong;      // 移动
+        uint32 gongji;      // 攻击
+        uint32 fangyu;      // 防御
+        uint32 select;      // 选择范围
+        uint32 apply;       // 应用范围
+        uint32 zhuanzhi;    // 升职兵种，兵种索引值 0为孙悟空，既是不可以
+        uint32 zhuanzhidaoju; // 转职所需道具 0为不可以
+        uint32 pad1;
+        uint32 flm_gongji;    // 攻击时的动画
+        uint32 audio_gongji;  // 攻击时的声音
+        uint32 audio_yidong;  // 移动时的声音
+        uint32 foo3[16];
+        JiNengFlag jineng;
+    }BingZhong <read=ReadBingZhong>;
+
+    // 每个兵种的移动消耗，
+    // 共16个地形，数值为该格所消耗的行动力
+    typedef struct {
+        uchar yidong[0x10];
+    }BingZhongYiDong;
+
+    typedef struct {
+        char   name[0x10];
+        char   unit[0x8];
+        uint32 goods;       // 索引值，指向goods索引
+        uint32 price;       // 价格
+        uint32 para1;       // 参数1，
+        uint32 para2;       // 参数2，
+        uint32 para3;       // 参数3，
+        uint32 para4;       // 参数4
+        uint32 select_fw;   // 选择范围
+        uint32 apply_fw;    // 应用范围
+        uint32 pad7;        // 代码里没有这个字段的应用
+        uint32 pad8;        // 代码里没有这个字段的应用
+        uint32 audio_get;   // 拾取音效
+        uint32 audio_apply; // 使用音效
+    }WuPin <read=ReadWuPin>;
+
+    typedef struct {
+        char   name[0x10];
+        char   unit[0x8];
+        uint32 price;
+    }Material <read=(name)>;
+
+    // 地理的制作配方
+    typedef struct {
+        char recipe[10]; // 索引即指向material的索引，其值为数量
+    }DiLeiRecipe;
+
+    typedef struct {
+        char   name[0x10];
+        uint32 price;
+        int32  weili;
+        int32  shiqi_or_tili;// 1:士气 0:体力
+        int32  apply_fw;
+        int32  pad3;      // 代码里没有这个字段的应用
+        int32  pad4;      // 代码里没有这个字段的应用
+        int32  flm_index;
+        int32  audio_index;
+    }DiLei <read=ReadDiLei>;
+
+    typedef struct {
+        char name[0x10];
+        int32 para1;        // 影响的第一个参数
+        int32 para2;        // 影响的第二个参数
+        JiNengType type;    // 技能类型，每个类型对应一个函数，硬编码
+        int32 select_fw;    // 使用技能时的范围提示 game.fanwei
+        int32 apply_fw;     // 
+        int32 anm_index;    // 大动画索引 320 * 200 ffpact<xx>.anm -1表示没有anm
+        int32 flm_index;    // 小动画索引 48*48 flm.dat 
+        int32 audio_index;  // 声音索引 wave.dat
+    }JiNeng <read=ReadJiNeng>;
+
+    // 16种选择范围类型，每个类型都是9X9的格子
+    typedef struct {
+        struct SelectItem {
+            char select_row[9];
+        } selectstem[9] <read = ReadSelectItem>;
+    }SelectFanwei;
+
+    // 48种应用范围，每个类型是7X7的格子，值为百分比
+    typedef struct {
+        struct {
+            int apply_row[7];
+        } ApplyItem[7];
+    }ApplyFanWei;        // what5
+
+    // Row为物品编号，Column为兵种编号,值为是否有效，个别值大于1的意义待查
+    typedef struct {
+        typedef struct {
+            char f[0x60];
+        } WPVRow;
+        WPVRow row[160];
+    }WuPinValid;
+
+    What0     w0;
+    DiXingModifier     xz[0x10];
+    BingZhong bz[0x60];
+    BingZhongYiDong     bzyd[96];
+    WuPin     wp[0xA0];
+    Material  m[0xA];
+    DiLeiRecipe dr[10];
+    DiLei     dl[0xA];
+    JiNeng    jn[0x10];
+    SelectFanwei     select[0x10];
+    ApplyFanWei      apply[48];
+    WuPinValid wpv;
+}Game;
+
+string ReadBingZhong(BingZhong &b)
+{
+    string s;
+    SPrintf( s, "%s<%d>", b.name, b.apply);
+    return s;
+}
+
+string ReadWuPin( WuPin &w )
+{
+    string s;
+    SPrintf( s, "%s<%d, %d>", w.name, w.pad7, w.pad8);
+    return s;
+}
+
+string ReadJiNeng(JiNeng &jn)
+{
+    string s;
+    SPrintf( s, "%s<%d>", jn.name, jn.pad5);
+    return s;
+}
+
+string ReadDiLei(DiLei& dl)
+{
+    string s;
+    SPrintf( s, "%s<%d, %d>", dl.name, dl.weili, dl.shiqi_or_tili);
+    return s;
+}
+
+string ReadSelectItem(SelectItem &r)
+{
+    string s;
+    local int i;
+    for(i = 0; i < 9; i++) {
+        s = SPrintf( s, "%s,%d", s, r.select_row[i]);
+    }
+    return s;
+}
+
+Game game;

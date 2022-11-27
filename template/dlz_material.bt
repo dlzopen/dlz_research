@@ -1,0 +1,22 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_material.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('material.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率48*48，共10个，调色板待整理
+// 制作地雷的原料
+
+typedef struct {
+    char buffer[0x900];
+}Meterial;
+
+Meterial meterial[10];

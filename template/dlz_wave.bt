@@ -1,0 +1,43 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_map.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('wave.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-24 first version
+//------------------------------------------------
+
+
+typedef struct {
+    typedef struct {
+        uint32 offset; // 索引便宜
+        uint32 length; // 数据长度
+    } Index <read=ReadIndex>;
+
+    typedef struct {
+        ushort  width;   // 宽度
+        ushort  height;  // 高度
+        char    plkname[0xc]; // 指向的plk
+        char    palname[0xc]; // 指向的pal
+        ushort  buffer[width*height]<read=ReadBuffer, bgcolor=(colors[this[0]>>12])>; // 数据
+    } Data <optimize=false>;
+
+    Index index[0x400];
+    
+} Wave;
+
+string ReadIndex(Index &i)
+{
+    string s;
+    if(i.length == 0)
+        return "---";
+    SPrintf( s, "%x %x", i.offset, i.length);
+    return s;    
+}
+
+Wave wave;

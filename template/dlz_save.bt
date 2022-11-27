@@ -1,0 +1,149 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_save.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('savex.dat')
+//  Category: Game
+// File Mask: save*.dat
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+typedef struct {
+
+    typedef struct {
+        char name[0x20];
+        uint32 difficulty;    // 难度系数，用于打分，用于保证正常情况下，你的分数在100分
+        uint32 pad1;
+        char success[0x40];
+        char failure[0x40];
+        struct {
+            uint32 x;
+            uint32 y;
+            uint32 appearance; // 一共三个外观,box.img;wupin-1时，打开状态
+            uint32 wupin;      // 加载时，随机三个物品的结果；如果拿取，此值为-1
+            uint32 wupin0;     // 50%几率
+            uint32 wupin1;     // 30%几率
+            uint32 wupin2;     // 20%几率
+        } box[4];
+        uint32 pad9;       // 7d02e0
+        uchar  pad10[0x20];// 7d02e4
+        uint32 pad11;      // 7d02f4
+        uint32 pad12;      // 7D0304
+        uint32 pad13[92];  // 7D030C
+        uint32 pad14;      // 7D047C
+        uint32 pad15;      // 7D0480
+    } Intro <read=ReadIntro>;
+    
+    // 战斗人员信息
+    typedef struct {
+        int  pad0;
+        int  tili;
+        int  shiqi;
+        int  pad3;
+        int  yidong;
+        int  pad5;
+        int  pad6;
+        int  pad7;
+        int  pos_x;        // 横坐标
+        int  pos_y;        // 纵坐标
+        int  direction;    // 0：北 1：南 2：西 3：东
+        int  pad11;
+        int  pad12;
+        int  pad13;
+        int  pad14;
+        char stage;        // 是否登场
+        char pad15_b1;     // 其值可能时0,1,2,3,4,5,6,7,8,10 (没有9）
+        char pad15_b2;
+        char moveable;     // 是否已行动，1，未，0：完；2：攻击 3：被攻击
+    } Fighter <read=ReadFighter>;
+    
+    typedef struct {
+        char name[0x10];  // 名字
+        uint32 face;    // 头像索引
+        uint32 pad2;
+        uint32 enemy;   // 0 我方；1 敌方 和 fight.fighter.p15共同完成判断
+        uint32 wuli;    // 武力
+        uint32 zhili;   // 智力
+        uint32 level;   // 人物等级
+        uint32 jingyan; // 经验
+        uint32 bingzhong;// 兵种
+        uint32 gongji;  // 攻击
+        uint32 buji;    // 补给
+        uint32 jili;    // 激励
+        uint32 yiliao;  // 医疗
+        uint32 huogong; // 火攻
+        uint32 gunmu;   // 滚木
+        uint32 leishi;  // 擂石
+        uint32 weishe;  // 威慑
+        uint32 saorao;  // 骚扰
+        uint32 pohuai;  // 破坏
+        uint32 lueduo;  // 掠夺
+        uint32 fanjian; // 反间
+        uint32 yibing;  // 疑兵
+        uint32 duzhan;  // 督战
+        uint32 ansha;   // 暗杀
+        uint32 shidu;   // 施毒
+        uint32 kongxi;  // 空袭
+    
+        byte   wupin[8];// 物品
+        byte   dilei[8];// 地雷
+    }People <read=ReadPeople>;
+    
+    uint32 pad0;
+    uint32 fight_index;
+    uint32 pad2;
+    uint32 fight_turn_number;
+
+    Intro intro;
+    uint32 town_index;
+    uint32 pad5;
+    uint32 pad6;
+    uint32 people_kill_by_gun;
+    uint32 people_kill_by_mine;
+    uint32 fighter_status[0x10];
+    uint32 pad10[0x13];
+    uint32 pad11[0xe];
+    uint32 pad12[0x5f];
+
+    Fighter fighter[0x80];
+    Fighter fighter_back[0x80];
+    People people[128];
+    People people_back[128];
+    uint16 cangku[0xa0];
+    uint16 fight_cangku[0xa0];
+    uint16 pad19[0x28];
+    uint32 pad20[0xa];
+    uint16 pad21[0x4000];
+    char   pad22[8];
+    char   pad23[0x1c];
+    char   pad24[0xC];
+    int32  tick;
+    int32  pad26;
+}Save;
+
+string ReadIntro(Intro &i)
+{
+    string s;
+    SPrintf( s, "%s<%d>", i.name, i.pad1);
+    return s;
+}
+
+string ReadPeople(People &p )
+{
+    string s;
+    SPrintf( s, "%s<%d>", p.name, p.enemy);
+    return s;
+}
+
+string ReadFighter(Fighter &f )
+{
+    string s;
+    SPrintf( s, "%d<%d>", f.moveable, f.pad14);
+    return s;
+}
+
+Save save;

@@ -1,0 +1,19 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: dlz_goods.bt
+//   Authors: ltg1831
+//   Version: 0.1
+//   Purpose: Analyze the file ('goods.dat')
+//  Category: Game
+// File Mask: 
+//  ID Bytes: 
+//   History:
+//   0.1   2022-4-14 first version
+//------------------------------------------------
+
+// 分辨率48*48的图片，0为透明色，共128个商品。调色板待整理
+typedef struct {
+    char buf[0x900];
+}Goods;
+Goods goods[128];
