@@ -417,5 +417,4 @@ if __name__ == "__main__":
     make_dir()
     out = open('../export/game.csv', 'w+')
     out.write('运行脚本export_game.py的运行结果，该表格基于game.dat的数据分析\n')
-    out.write('你可以在这里发现它：https://gitee.com/ltg1831/dlz/commits/master/doc/scripts/export_game.py\n')
     game.export(out)

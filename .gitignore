@@ -6,6 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
+# export files
+export/
+
+# game's orgin data directory
+DLZFULL
+
 # Distribution / packaging
 .Python
 build/

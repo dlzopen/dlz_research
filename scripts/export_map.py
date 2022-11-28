@@ -4,13 +4,15 @@ import struct
 from export_utils import *
 from export_fight import fights
 
+is_transparent = True
+
 '''Run Script in this folder'''
 
 class BLK():
     def __init__(self):
         self.index = []
         self.blk = []
-        self.pal = palette
+        self.pal = get_palette(is_transparent)
         self.drawline = False
 
         with open(get_path_in_dlz('blk.dat'), 'rb') as f:
@@ -121,8 +123,8 @@ class Map():
     def __init__(self):
         self.index = []
         self.map = []
-        self.drawline = True
-        self.drawflag = True
+        self.drawline = False
+        self.drawflag = False
 
         with open(get_path_in_dlz('map.dat'), 'rb') as f:
             for i in range(0x40):

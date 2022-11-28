@@ -25,12 +25,23 @@ class Img():
             result.append((p[3*b + 0]*4, p[3*b + 1]*4, p[3*b + 2]*4, 255))
         return result
     
+    # def export(self):
+    #     path = DLZ_EXPORT + self.filename + '.png'
+
+    #     img = Image.new("RGBA", (self.width, self.height))
+    #     for i in range(0, 1):
+    #         img.putdata(self.get_data(i))
+    #         # save new image
+    #         img.save(f"{path}")
+    #         # img.show()
+
     def export(self):
         path = DLZ_EXPORT + self.filename + '.png'
 
-        img = Image.new("RGBA", (self.width, self.height))
+        img = Image.new("P", (self.width, self.height))
+        img.palette = get_image_palette(False)
         for i in range(0, 1):
-            img.putdata(self.get_data(i))
+            img.putdata(self.buf)
             # save new image
             img.save(f"{path}")
             # img.show()

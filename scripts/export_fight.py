@@ -52,8 +52,6 @@ fights = Fights()
 
 if __name__ == "__main__":
     make_dir(DLZ_EXPORT)
-    make_dir()
     out = open('../export/fight.csv', 'w+')
     out.write('运行脚本export_fight.py的运行结果，该表格基于fight.dat的数据分析\n')
-    out.write('你可以在这里发现它：https://gitee.com/ltg1831/dlz/commits/master/doc/scripts/export_fight.py\n')
     fights.export(out)
