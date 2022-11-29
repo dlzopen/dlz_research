@@ -2,34 +2,23 @@
 //--- 010 Editor v12.0.1 Binary Template
 //
 //      File: dlz_map.bt
-//   Authors: ltg1831
-//   Version: 0.1
+//   Authors: ltg1831, dlzopen
+//   Version: 0.2
 //   Purpose: Analyze the file ('wave.dat')
 //  Category: Game
 // File Mask: 
 //  ID Bytes: 
 //   History:
-//   0.1   2022-4-24 first version
+//   0.1   2022-4-24 ltg1831 first version
+//   0.2   2022-11-29 dlzopen update for wave's buffer
 //------------------------------------------------
 
-
 typedef struct {
-    typedef struct {
-        uint32 offset; // 索引便宜
-        uint32 length; // 数据长度
-    } Index <read=ReadIndex>;
+    uint32 offset; // 索引便宜
+    uint32 length; // 数据长度
+} Index <read=ReadIndex>;
 
-    typedef struct {
-        ushort  width;   // 宽度
-        ushort  height;  // 高度
-        char    plkname[0xc]; // 指向的plk
-        char    palname[0xc]; // 指向的pal
-        ushort  buffer[width*height]<read=ReadBuffer, bgcolor=(colors[this[0]>>12])>; // 数据
-    } Data <optimize=false>;
-
-    Index index[0x400];
-    
-} Wave;
+Index index[0x400];
 
 string ReadIndex(Index &i)
 {
@@ -40,4 +29,20 @@ string ReadIndex(Index &i)
     return s;    
 }
 
-Wave wave;
+// 最后一个有效音频的序号为904
+// 音频的频率是44100
+// 采样位数为16
+
+typedef struct (uint64 i)
+{
+    if(index[i].length > 0) {
+        uchar data[index[i].length];
+    }
+}Buffer <optimize=false>;
+
+local int i = 0;
+local int l;
+while(i<0x400){
+    Buffer buf(i);
+    i = i+1;
+}
