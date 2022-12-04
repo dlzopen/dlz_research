@@ -9,7 +9,8 @@
 // File Mask: 
 //  ID Bytes: 
 //   History:
-//   0.1   2022-4-14 first version
+//   0.1   2022-4-14 ltg1831 first version
+//   0.2   2022-14-03 dlzopen second version.
 //------------------------------------------------
 
 
@@ -31,11 +32,20 @@ typedef struct {
     uint32 name_y[6];
     uint32 offest_x[6];
     uint32 offset_y[6];
-    uint32 pad15[10];   // 这个地方才应该是材料，但是代码里没有使用，设计和编码人员失误了？！
-    uint32 wupin_junxie[12];   // 12 个可卖的军械物品
-    uint32 wupin_zahuo[12];   // 12 个可卖的杂货物品
-    uint32 material[12];   // 12 个可卖的材料
+    uint32 goods_what[10];     // 这个地方才应该是材料，但是代码里没有使用，设计和编码人员失误了？！
+    uint32 goods_junxie[12];   // 12 个可卖的军械物品
+    uint32 goods_zahuo[12];    // 12 个可卖的杂货物品
+    uint32 goods_material[12]; // 12 个可卖的材料
 
-    ushort  dat2[11];   // 设计的比较奇怪，感觉没用到
-} Town;
+    ushort  flags[11];         // 索引1为是否带有动画(其它所有字节均未使用)
+} Town <read=ReadTown>;
+
+string ReadTown( Town &t )
+{
+    string s;
+    SPrintf( s, "%d", t.dat2[1]);
+    return s;
+}
+
+
 Town town[19];
