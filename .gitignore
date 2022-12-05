@@ -9,6 +9,9 @@ __pycache__/
 # export files
 export/
 
+# ui temp files
+imgs/ui/
+
 # game's orgin data directory
 DLZFULL
 

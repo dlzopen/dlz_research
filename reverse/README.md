@@ -1,215 +1,129 @@
 # 简介
 
-#### 工具
+## 更新次序
+1. 一般最先在`ida`进行详细的反编码。所以所有结构都最先保存在[idb文件](./DLZ.exe.idb)（但是也有可能是错误的）
+2. 一旦觉得没有问题，就会更新至010editor的[模板文件](../template/)。再次验证数据是否正确
+3. 上一步确认没有问题后，将会更新至[脚本代码](../scripts/)
+
+## 工具
 * UltraEdit 二进制与文本切换起来非常方便
 * 010editor v12.0.1 二进制文件结构化分析功能十分强大
 * Ida v7.7  反汇编逆向工具
 * Mspaint   分析调色板
 
-#### 文件列表
-所有IMG后缀文件格式统一，所以他们处理完一个，就全部分析完成。
-Dat后缀的文件一共四种情况：
-1. 自带图形数据及调色板
-2. 自带图形数据，不带有调色板。需要逆向分析其调色板。
-3. 文本文件（txt.dat)，加了密
-4. 音频文件（wave.dat)
-
-FLC后缀文件好像也是加密的，解读中....
-
-##### 文件进度
-
-*宽度、高度在img里面的值都比实际值小1*
-
-| 名称 | 进度 | 宽度 | 高度 | 数量 | 模板 | 说明 |
-| ---  | --- | --- | :-- | :-- | :-- | :-- |
-|77-1.IMG|![%100](https://progress-bar.dev/100/)| 640 | 428 | 1 | dlz_img.bt | |
-|77-2.IMG|![%100](https://progress-bar.dev/100/)| 580 | 480 | 1 | dlz_img.bt | |
-|918-2.IMG|![%100](https://progress-bar.dev/100/)| 640 | 276 | 1 | dlz_img.bt | |
-|918-3.IMG|![%100](https://progress-bar.dev/100/)| 640 | 367 | 1 | dlz_img.bt | |
-|ARMY.DAT|![%100](https://progress-bar.dev/100/)| 48 | 48 | 19*91 | dlz_army.bt | 每个兵种19帧，共91个兵种 |
-|ASC16|![%0](https://progress-bar.dev/0/)| | | |  | 不予处理 |
-|BACK19.IMG|![%100](https://progress-bar.dev/100/)| 640 | 640 | 1 | dlz_img.bt | |
-|BG01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | |
-|BG02.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | |
-|BG03.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | |
-|BIGMAP.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 平原县的总地图 |
-|BIGMINE0.IMG|![%100](https://progress-bar.dev/100/)| 70 | 81 | 1 | dlz_img.bt | |
-|BIGMINE1.IMG|![%100](https://progress-bar.dev/100/)| 70 | 81 | 1 | dlz_img.bt | |
-|BLK.DAT|![%100](https://progress-bar.dev/100/)| 48 | 48 | | dlz_blk.bt | 战斗场景的塔图 |
-|BOX.IMG|![%100](https://progress-bar.dev/100/)| 48 | 288 | 1 | dlz_img.bt | |
-|BUTTON0.IMG|![%100](https://progress-bar.dev/100/)| 50 | 25 | 1 | dlz_img.bt | |
-|BUTTON00.IMG|![%100](https://progress-bar.dev/100/)| 28 | 312 | 1 | dlz_img.bt | |
-|BUTTON00.TGA|![%100](https://progress-bar.dev/100/)| 28 | 312 | 1 | tga.bt | |
-|BUTTON01.IMG|![%100](https://progress-bar.dev/100/)| 28 | 312 | 1 | dlz_img.bt | |
-|BUTTON01.TGA|![%100](https://progress-bar.dev/100/)| 28 | 312 | 1 | tga.bt | |
-|BUTTON1.IMG|![%100](https://progress-bar.dev/100/)| 50 | 25 | 1 | dlz_img.bt | |
-|BUTTON10.IMG|![%100](https://progress-bar.dev/100/)| 35 | 19 | 1 | dlz_img.bt | |
-|BUTTON11.IMG|![%100](https://progress-bar.dev/100/)| 35 | 19 | 1 | dlz_img.bt | |
-|BUTTON12.IMG|![%100](https://progress-bar.dev/100/)| 35 | 19 | 1 | dlz_img.bt | |
-|BUTTON13.IMG|![%100](https://progress-bar.dev/100/)| 35 | 19 | 1 | dlz_img.bt | |
-|BUTTON2.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON22.IMG|![%100](https://progress-bar.dev/100/)| 88 | 64 | 1 | dlz_img.bt | |
-|BUTTON3.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON4.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON5.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON6.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON7.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON8.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|BUTTON9.IMG|![%100](https://progress-bar.dev/100/)| 48 | 44 | 1 | dlz_img.bt | |
-|CIRCLE.TGA|![%100](https://progress-bar.dev/100/)| 48 | 48 | 1 | tga.bt | |
-|DLZ.exe|![%0](https://progress-bar.dev/0/)| | | | ida.exe | 这是一个漫长的过程 |
-|DLZ00.IMG|![%100](https://progress-bar.dev/100/)| 40 | 360 | 1 | dlz_img.bt | |
-|DLZ00.TGA|![%100](https://progress-bar.dev/100/)| 40 | 360 | 1 | tga.bt | |
-|DLZ01.TGA|![%100](https://progress-bar.dev/100/)| 40 | 360 | 1 | tga.bt | |
-|END00.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | |
-|END01.IMG|![%100](https://progress-bar.dev/100/)| 320 | 200 | 1 | dlz_img.bt | |
-|END02.IMG|![%100](https://progress-bar.dev/100/)| 320 | 200 | 1 | dlz_img.bt | |
-|END03.IMG|![%100](https://progress-bar.dev/100/)| 320 | 200 | 1 | dlz_img.bt | |
-|END04.IMG|![%0](https://progress-bar.dev/0/)|  |  |  | dlz_img.bt | 数据异常？ |
-|END05.IMG|![%100](https://progress-bar.dev/100/)| 320 | 200 | 1 | dlz_img.bt | |
-|FACE.DAT|![%100](https://progress-bar.dev/100/)| 80 | 100 | 170 | dlz_face.bt | |
-|FFPACT00.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT01.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT02.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT03.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT04.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT05.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT06.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT07.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT08.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT09.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT10.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT11.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT12.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT13.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT41.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT42.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT43.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT44.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT45.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT46.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT47.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT48.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT49.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT50.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT51.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT52.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT53.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FFPACT54.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|FIGHT.DAT|![%50](https://progress-bar.dev/50/)| | | | dlz_fight.bt | 这个比较复杂 |
-|FLM.DAT|![%100](https://progress-bar.dev/100/)| 48 | 48 | 16*32 | dlz_flm.bat | 共32个动画，每个动画16帧 |
-|FRAME00.IMG|![%100](https://progress-bar.dev/100/)| 404 | 127 | 1 | dlz_img.bt | |
-|FRAME00.TGA|![%100](https://progress-bar.dev/100/)| 404 | 127 | 1 | tga.bt | |
-|GAME.DAT|![%70](https://progress-bar.dev/70/)| | | | dlz_game.bt | 游戏基础数据 |
-|GOODS.DAT|![%100](https://progress-bar.dev/100/)| | | | dlz_goods.bt | 商品数据 |
-|HZK16|![%0](https://progress-bar.dev/0/)| | | | | 不予处理 |
-|JZ-1.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 剧终1 |
-|JZ-2.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 剧终2 |
-|K00.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框1 |
-|K01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框2 |
-|K02.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框3 |
-|K03.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框4 |
-|K04.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框5 |
-|KINGSOFT.FLC|![%0](https://progress-bar.dev/0/)| | | | | |
-|KR-1.FLC|![%0](https://progress-bar.dev/0/)| | | | | |
-|KUAN04.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框6 |
-|KUANG00.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框7 |
-|KUANG01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框8 |
-|KUANG04.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 框9 |
-|MAP.DAT|![%100](https://progress-bar.dev/100/)| | | | dlz_map.bt | 战斗地图，共48，设计上限64 |
-|MATERIAL.DAT|![%100](https://progress-bar.dev/100/)| 48 | 48 | 10 | dlz_material.bt | 地雷材料 |
-|MENU.TGA|![%100](https://progress-bar.dev/100/)| 80 | 120 | 1 | tga.bt | 菜单背景 |
-|MENU00.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | tga.bt | 战报背景 |
-|MENU01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | tga.bt | 主角生成背景 |
-|MENU02.IMG|![%100](https://progress-bar.dev/100/)| 480 | 360 | 1 | tga.bt | 背景2 |
-|MENU03.IMG|![%100](https://progress-bar.dev/100/)| 128 | 88 | 1 | tga.bt | 菜单3 |
-|MENU08.IMG|![%100](https://progress-bar.dev/100/)| 304 | 227 | 1 | tga.bt | 背景8 |
-|MENU09.IMG|![%100](https://progress-bar.dev/100/)| 456 | 227 | 1 | tga.bt | 背景8 |
-|MENU10.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | tga.bt | 战报背景 |
-|MENU20.IMG|![%100](https://progress-bar.dev/100/)| 168 | 48 | 1 | tga.bt | 初出茅庐 |
-|MENU21.IMG|![%100](https://progress-bar.dev/100/)| 168 | 48 | 1 | tga.bt | 继往开来 |
-|MENU22.IMG|![%100](https://progress-bar.dev/100/)| 168 | 48 | 1 | tga.bt | 战斗英雄 |
-|MENU23.IMG|![%100](https://progress-bar.dev/100/)| 168 | 48 | 1 | tga.bt | 支前模范 |
-|MENU24.IMG|![%100](https://progress-bar.dev/100/)| 168 | 48 | 1 | tga.bt | 部队休整 |
-|MENU30.IMG|![%100](https://progress-bar.dev/100/)| 17 | 25 | 1 | tga.bt | |
-|MENU34.IMG|![%100](https://progress-bar.dev/100/)| 304 | 168 | 1 | tag.bt | |
-|MENU50.IMG|![%100](https://progress-bar.dev/100/)| 232 | 56 | 1 | tga.bt | 初出茅庐 |
-|MENU51.IMG|![100](https://progress-bar.dev/100/)| 232 | 56 | 1 | tga.bt | 继往开来 |
-|MENU52.IMG|![100](https://progress-bar.dev/100/)| 232 | 56 | 1 | tga.bt | 战斗英雄 |
-|MENU53.IMG|![100](https://progress-bar.dev/100/)| 232 | 56 | 1 | tga.bt | 支前模范 |
-|MENU54.IMG|![100](https://progress-bar.dev/100/)| 232 | 56 | 1 | tga.bt | 部队休整 |
-|MINE.DAT|![%100](https://progress-bar.dev/100/)| 48 | 48 | 4*10 | dlz_mine.bt | 由10类地雷和4个引爆方式组成的40个地雷图标|
-|MINE.IMG|![%100](https://progress-bar.dev/100/)| 16 | 16 | 1 | dlz_img.bt | 地雷小图标 |
-|MINE00.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE01.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 480 | 1 | dlz_img.bt | 游戏启动界面 |
-|MINE02.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE02.IMG|![%100](https://progress-bar.dev/100/)| 56 | 1440 | 1 | dlz_img.bt | 旋转的地雷 |
-|MINE03.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE04.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE05.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE06.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE07.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE08.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|MINE09.ANM|![%0](https://progress-bar.dev/0/)| | | | | |
-|NPIC01.IMG|![%100](https://progress-bar.dev/100/)| 640 | 366 | 1 | dlz_img.bt | |
-|NPIC02.IMG|![%100](https://progress-bar.dev/100/)| 489 | 480 | 1 | dlz_img.bt | |
-|NPIC03.IMG|![%100](https://progress-bar.dev/100/)| 345 | 480 | 1 | dlz_img.bt | |
-|NPIC04.IMG|![%100](https://progress-bar.dev/100/)| 571 | 480 | 1 | dlz_img.bt | |
-|NPIC05.IMG|![%100](https://progress-bar.dev/100/)| 640 | 449 | 1 | dlz_img.bt | |
-|NPIC06.IMG|![%100](https://progress-bar.dev/100/)| 640 | 449 | 1 | dlz_img.bt | |
-|NPIC07.IMG|![%100](https://progress-bar.dev/100/)| 640 | 460 | 1 | dlz_img.bt | |
-|NPIC08.IMG|![%100](https://progress-bar.dev/100/)| 640 | 439 | 1 | dlz_img.bt | |
-|NPIC18.IMG|![%100](https://progress-bar.dev/100/)| 633 | 480 | 1 | dlz_img.bt | |
-|NPIC19.IMG|![%100](https://progress-bar.dev/100/)| 640 | 424 | 1 | dlz_img.bt | |
-|NPIC20.IMG|![%100](https://progress-bar.dev/100/)| 373 | 480 | 1 | dlz_img.bt | |
-|NPIC21.IMG|![%100](https://progress-bar.dev/100/)| 380 | 480 | 1 | dlz_img.bt | |
-|NPIC22.IMG|![%100](https://progress-bar.dev/100/)| 353 | 480 | 1 | dlz_img.bt | |
-|NPIC25.IMG|![%100](https://progress-bar.dev/100/)| 609 | 275 | 1 | dlz_img.bt | |
-|NPIC29.IMG|![%100](https://progress-bar.dev/100/)| 640 | 445 | 1 | dlz_img.bt | |
-|PEOPLE.DAT|![%90](https://progress-bar.dev/90/)| | | | dlz_people.bt | 40个人物，包括孙悟空 |
-|PLACE.DAT|![%100](https://progress-bar.dev/100/)| 640 | 480 | 19 | dlz_place.bt | 19个城镇的背景图片 |
-|Test01.flc|![%0](https://progress-bar.dev/0/)| | | | | |
-|TOWN.DAT|![%20](https://progress-bar.dev/20/)| | | | dlz_town.bt | 19个城镇的数据 |
-|TRAIN.FLC|![%0](https://progress-bar.dev/0/)| | | | | |
-|TXT.DAT|![%100](https://progress-bar.dev/100/)| | | | show_txt.py | 对话数据，加了密，很简单 |
-|WAVE.DAT|![%50](https://progress-bar.dev/50/)| | | | dlz_wave.bt | 音频数据 |
-|ZYB.IMG |![%0](https://progress-bar.dev/0/)| | | | dlz_img.bt | 游戏通关图片，比较特殊,采用滚动模式读取？ |
-
-
-##### 模板说明
+## 模板说明
 * bt后缀文件，需要010editor，相关文件保存位置在[这里](../template/)
 * py后缀文件，需要python 3.10，以及pillow库。相关脚本保存在[这里](../scripts/)
 * ida.exe，神级逆向工具
 
-##### 调色板
+## 调色板
 通过分析数据和游戏运行截图，从而推到相关图片的调色板。依然未发现调色板数据的保存位置。
 当前的分析结果可以查看这个[文件](../scripts/export_utils.py)
 
-#### 公式
-##### 伤害
+# 技能
+技能所在文件`game.dat`，一共`16`个技能，每个技能的长度为`0x30` `48`。
+
+在运行文件中：
+地址`00447280`保存的是当前使用的技能索引
+地址`0057BA40`保存的是技能数据，即`game.dat`中的技能数据
+
+## 列表
+| 序号 | 名称 | 地址 | 长度 | 参数1 | 参数2 | 类型 | 选择范围 | 应用范围 | 大动画 | 小动画 | 声音 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|0|补给|x0743c|x030|120|0|x0 增加体力|5|40|-1|16|602|
+|1|激励|x0746c|x030|0|20|x1 增加士气|5|40|-1|17|618|
+|2|医疗|x0749c|x030|120|10|x2 增加体力士气|5|40|-1|18|635|
+|3|火攻|x074cc|x030|80|0|x3 降低体力|2|44|0|0|610|
+|4|滚木|x074fc|x030|80|0|x3 降低体力|2|44|1|1|611|
+|5|擂石|x0752c|x030|80|0|x3 降低体力|2|44|2|2|613|
+|6|威慑|x0755c|x030|0|20|x4 降低士气|4|40|-1|27|620|
+|7|骚扰|x0758c|x030|50|0|x5 防御-70%|5|40|-1|19|605|
+|8|破坏|x075bc|x030|50|0|x6 攻击-70%|5|40|-1|20|624|
+|9|掠夺|x075ec|x030|0|0|x7 抢夺装备|5|0|-1|21|627|
+|10|反间|x0761c|x030|0|0|x8 攻击等级-1|5|40|-1|31|636|
+|11|疑兵|x0764c|x030|0|0|x9 停止攻击一回合|5|40|-1|23|612|
+|12|督战|x0767c|x030|20|0|xa 恢复攻击|5|16|-1|24|637|
+|13|暗杀|x076ac|x030|10000|0|x3 降低体力|4|0|-1|25|638|
+|14|施毒|x076dc|x030|180|40|x3 降低体力|5|40|3|3|639|
+|15|空袭|x0770c|x030|400|0|x3 降低体力|15|36|4|4|600|
+
+## 技能等级判定
+游戏保存各个技能使用的次数（包括攻击），然后按照使用次数来定义技能等级。每个技能等级所需要的的次数是
+| 等级 | 次数上限 |
+| :-: | ---: |
+| 0 | 1 |
+| 1 | 10 |
+| 2 | 25 |
+| 3 | 45 |
+| 4 | 70 |
+| 5 | 100 |
+| 6 | 135 |
+| 7 | 175 |
+| 8 | 225 |
+| 9 | 300 |
+| 10| --- |
+
+数据地址：`00447280`
+
+## 公式
+### 伤害
 以下公式都是ida逆向分析结果，汇编码在`text:00413909`位置附近。如果你不想研究汇编代码，也可以到[这里](../template/dlz_game.bt)查看，进一步了解更多信息。
 1. 公式一 
 ``` c
-formula1 = people_zhili[33 * people_index] * game_jineng_para1[12 * jineng_index] / 0x64u;
-formula1 = ((sub_419CA4(people_buji[33 * people_index + jineng_index]) + 7) * formula1) >> 3;
+formula1 = people_zhili * game_jineng_para1 / 0x64u;
+formula1 = (jineng_level + 7) * formula1 >> 3;
 ```
 
 2. 公式二
 ``` c
-formula2 = people_zhili[33 * people_index] * game_jineng_para2[12 * jineng_index] / 0x64u;
-formula2 = ((sub_419CA4(people_buji[33 * people_index + jineng_index]) + 7) * formula2) >> 3;
+formula2 = people_zhili * game_jineng_para2 / 0x64u;
+formula2 = (jineng_level + 7) * formula2 >> 3;
 ```
 
-##### 经验
+## 经验
+函数地址`004138EA`
+
+### 补给
+* 自己人回血最低2经验，最高4经验。比例是回的血（到顶了，浪费了）与可以回血之比。
+* 友军人回血最低4经验，最高8经验。和自己人回血经验相比，经验翻倍。
+* 每成功给一个人回血(>0)，使用次数`+1`。同时给`N`个人回血成功，使用次数`+N`
+
+**主角和柳忻相互之间回血，会影响结局**
+**同理肖飞和柳忻之间回血，也会影响结局**
+
+### 激励
+* 自己人回士气最低1经验，最高4经验。比例是回的士气（到顶了，浪费了）与可以回的士气之比。
+* 友军人回士气最低4经验，最高12经验。和自己人回士气经验相比，经验翻两倍。
+* 每成功给一个人回士气(>0)，使用次数`+1`。同时给`N`个人回士气成功，使用次数`+N`
+
+**主角和柳忻相互之间士气，会影响结局**
+**同理肖飞和柳忻之间士气，也会影响结局**
+
+### 激励
+* 自己人2经验
+* 友军人8经验
+* 每成功给一个人回血**或者**回士气(>0)，使用次数`+1`。同时给`N`个人回血**或者**回士气成功，使用次数`+N`
+
+**主角和柳忻相互之间激励，会影响结局**
+**同理肖飞和柳忻之间激励，也会影响结局**
+
+# 人物
+一共128个人物，40个我方人物，其中32个可加入（包括主角）。人物有两个结构体描述，一个为People, 大小为`84h`字节；另一个为Fighter，大小为`40h`字节。People在执行文件的地址是`007D0EF8`；Fighter的地址是`0096AB90`。
+## 公式
+* 地址`0042A82A`, 攻击力 = $ (武力+500)* \frac{(人物等级-1)*(兵种攻击力加成-1) + \frac{武力*3*兵种攻击力}{100}}{580} * \frac{技能等级+59}{60} * 装备完整度 * \frac{士气+100}{200} + 物品攻击力 $
+* 地址`0042A98E`，防御力 = $ ((人物等级-1)*兵种防御力加成 + 兵种防御力) * \frac{what?}{100}* \frac{士气+100}{200}*\frac{100+地形修正}{100} + 物品防御力 $
+* 伤害 = $ (攻击力 - 防御力) * \frac{应用范围修正}{100} $
+* 士气 = $ MAX(1,\frac{20 * 伤害}{体力})$
+
 ##### 计分
 ##### 成功率
 ##### 升级
-##### 
+##### 战斗策略
+战斗策略通过硬编码实现，每个战斗策略又通过若干的行为构成。敌方、友方、自动战斗部分都由战斗策略来完成。
+有函数`get_fighter_behavior`和`calc_behavior`来实现。
 
 #### 逆向工程文件
 DLZ.exe.idb是是对`dlz.exe`的逆向工程的打包文件。其对应的版本是`IDA pro 7.7 32bit`。现决定将其备份至gitee（这个文件不会频繁更新）。以待有人需要它。
-
 
 #### 相关资料页面
 #####窗口消息
