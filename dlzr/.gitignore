@@ -1,0 +1,47 @@
+# Build outputs
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled objects
+*.o
+*.obj
+*.exe
+*.lib
+*.dll
+*.a
+*.so
+*.dylib
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Original game data (user must provide)
+assets/dat/
+assets/img/
+assets/wave/
+assets/video/
+
+# SDL3 and other FetchContent deps
+_deps/
+
+# Compile commands (generated)
+compile_commands.json
+
+# Web build
+*.wasm
+*.js
+*.data
+*.html

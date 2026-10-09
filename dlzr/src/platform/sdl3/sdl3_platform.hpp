@@ -1,0 +1,65 @@
+#pragma once
+
+#include "platform/platform.hpp"
+
+#include <SDL3/SDL.h>
+
+#include <unordered_map>
+
+namespace dlzr::platform {
+
+class Sdl3Platform : public Platform {
+public:
+    Sdl3Platform() = default;
+    ~Sdl3Platform() override;
+
+    bool init(const PlatformConfig& config) override;
+    void shutdown() override;
+
+    bool poll_event(Event& out_event) override;
+
+    void clear(uint8_t r, uint8_t g, uint8_t b) override;
+    void present() override;
+
+    TextureHandle create_texture(int32_t width, int32_t height) override;
+    void update_texture(TextureHandle tex,
+                        const uint8_t* rgba_data,
+                        int32_t pitch) override;
+    void draw_texture(TextureHandle tex,
+                      int32_t dst_x, int32_t dst_y) override;
+    void draw_texture_rect(TextureHandle tex,
+                           int32_t dst_x, int32_t dst_y,
+                           int32_t dst_w, int32_t dst_h) override;
+    void destroy_texture(TextureHandle tex) override;
+
+    void draw_rect(int32_t x, int32_t y, int32_t w, int32_t h,
+                   uint8_t r, uint8_t g, uint8_t b) override;
+    void fill_rect(int32_t x, int32_t y, int32_t w, int32_t h,
+                   uint8_t r, uint8_t g, uint8_t b) override;
+    void draw_line(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+                   uint8_t r, uint8_t g, uint8_t b) override;
+
+    AudioHandle play_sound(const uint8_t* pcm_data, size_t size,
+                           int32_t sample_rate = 22050) override;
+    void stop_sound(AudioHandle handle) override;
+    bool is_sound_playing(AudioHandle handle) override;
+
+    void delay_ms(uint32_t ms) override;
+    uint32_t ticks_ms() override;
+
+private:
+    SDL_Window* window_{nullptr};
+    SDL_Renderer* renderer_{nullptr};
+    SDL_AudioDeviceID audio_device_{0};
+    std::unordered_map<TextureHandle, SDL_Texture*> textures_;
+    TextureHandle next_texture_{1};
+
+    struct SoundInstance {
+        SDL_AudioStream* stream{nullptr};
+        bool playing{false};
+    };
+    std::unordered_map<AudioHandle, SoundInstance> sounds_;
+    AudioHandle next_sound_{1};
+};
+
+}  // namespace dlzr::platform

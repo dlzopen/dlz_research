@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: >
+          cmake -S dlzr -B build
+          -DDLZR_BUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run Tests
+        working-directory: build
+        run: ctest -C Release --output-on-failure
+
+  build-web:
+    name: Web (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: emsdk/emscripten-setup@main
+        with:
+          version: latest
+
+      - name: Configure CMake
+        run: >
+          emcmake cmake -S dlzr -B build
+          -DDLZR_BUILD_TESTS=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: emmake make -C build -j$(nproc)
