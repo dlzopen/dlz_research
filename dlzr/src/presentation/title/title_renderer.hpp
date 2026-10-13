@@ -16,21 +16,18 @@ public:
     void render(int32_t selected_option, int32_t difficulty_level = 1);
 
     enum Option {
-        NEW_GAME = 0,
-        LOAD_GAME = 1,
-        DIFFICULTY = 2,
-        EXIT = 3,
-        OPTION_COUNT = 4,
+        NEW_GAME = 0,       // 初出茅庐
+        CONTINUE = 1,       // 继往开来
+        BATTLE_HERO = 2,    // 战斗英雄
+        SUPPORT_MODEL = 3,  // 支前模范
+        REST_TROOPS = 4,    // 部队休整
+        OPTION_COUNT = 5,
     };
 
 private:
     platform::Platform* platform_{nullptr};
     FontRenderer* font_{nullptr};
     ImageCache* images_{nullptr};
-
-    static constexpr int32_t MENU_X = 240;
-    static constexpr int32_t MENU_Y = 280;
-    static constexpr int32_t MENU_SPACING = 40;
 };
 
 }  // namespace dlzr::presentation

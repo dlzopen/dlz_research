@@ -412,14 +412,18 @@ int main(int argc, char* argv[]) {
                 audio.play_bgm(0);  // Title screen music
                 auto action = title_input.process_event(event, title_selected);
                 if (action == dlzr::presentation::TitleAction::NEW_GAME) {
-                    opening_renderer.start(gsm);
-                    gsm.set_mode(dlzr::logic::GameMode::CUTSCENE);
-                    audio.play_bgm(5);
-                } else if (action == dlzr::presentation::TitleAction::LOAD_GAME) {
+                    // 初出茅庐 - New game (go to character selection)
+                    gsm.set_mode(dlzr::logic::GameMode::LEVEL_SELECT);
+                } else if (action == dlzr::presentation::TitleAction::CONTINUE) {
+                    // 继往开来 - Continue/Load game
                     gsm.set_save_load_mode(1);  // Load mode
                     gsm.set_mode(dlzr::logic::GameMode::SAVE_LOAD);
-                } else if (action == dlzr::presentation::TitleAction::CYCLE_DIFFICULTY) {
-                    gsm.set_difficulty_level((gsm.difficulty_level() + 1) % 3);
+                } else if (action == dlzr::presentation::TitleAction::BATTLE_HERO) {
+                    // 战斗英雄 - Battle Hero (not implemented)
+                } else if (action == dlzr::presentation::TitleAction::SUPPORT_MODEL) {
+                    // 支前模范 - Support Model (not implemented)
+                } else if (action == dlzr::presentation::TitleAction::REST_TROOPS) {
+                    // 部队休整 - Rest Troops (not implemented)
                 } else if (action == dlzr::presentation::TitleAction::EXIT) {
                     running = false;
                 }

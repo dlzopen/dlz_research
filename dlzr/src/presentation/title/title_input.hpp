@@ -8,9 +8,11 @@ namespace dlzr::presentation {
 
 enum class TitleAction {
     NONE,
-    NEW_GAME,
-    LOAD_GAME,
-    CYCLE_DIFFICULTY,
+    NEW_GAME,       // 初出茅庐
+    CONTINUE,       // 继往开来
+    BATTLE_HERO,    // 战斗英雄
+    SUPPORT_MODEL,  // 支前模范
+    REST_TROOPS,    // 部队休整
     EXIT,
 };
 
@@ -20,11 +22,11 @@ public:
                                int32_t& selected_option);
 
 private:
-    static constexpr int32_t MENU_X = 320;
-    static constexpr int32_t MENU_Y = 520;
-    static constexpr int32_t MENU_SPACING = 25;
-    static constexpr int32_t MENU_WIDTH = 160;
-    static constexpr int32_t MENU_HEIGHT = 25;
+    // Click regions for 5 menu options (right side of 640×480 screen)
+    static constexpr int32_t MENU_X = 350;
+    static constexpr int32_t MENU_WIDTH = 250;
+    static constexpr int32_t MENU_Y[5] = {50, 130, 210, 290, 370};
+    static constexpr int32_t MENU_HEIGHT = 60;
 };
 
 }  // namespace dlzr::presentation
