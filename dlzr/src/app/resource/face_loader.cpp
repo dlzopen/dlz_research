@@ -77,15 +77,22 @@ bool FaceLoader::load(const std::string& path) {
     size_t file_size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    size_t expected = static_cast<size_t>(FACE_SIZE) * FACE_COUNT;
+    // Face portrait data starts at offset 0xC92C0 in FACE.DAT
+    // (RE: DAT_004761f8 + (index + 0x67) * 8000)
+    static const size_t FACE_DATA_OFFSET = 0xC92C0;
+    size_t expected = FACE_DATA_OFFSET + static_cast<size_t>(FACE_SIZE) * FACE_COUNT;
     if (file_size < expected) {
         std::fprintf(stderr, "FaceLoader: file too small (%zu < %zu)\n",
                      file_size, expected);
         return false;
     }
 
-    raw_data_.resize(expected);
-    file.read(reinterpret_cast<char*>(raw_data_.data()), expected);
+    // Skip to face data offset
+    file.seekg(FACE_DATA_OFFSET, std::ios::beg);
+
+    raw_data_.resize(static_cast<size_t>(FACE_SIZE) * FACE_COUNT);
+    file.read(reinterpret_cast<char*>(raw_data_.data()),
+              static_cast<size_t>(FACE_SIZE) * FACE_COUNT);
 
     build_rgba_cache();
     return true;

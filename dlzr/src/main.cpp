@@ -209,7 +209,7 @@ int main(int argc, char* argv[]) {
     int32_t char_selected_formation = 0;
     int32_t char_slider_value = 80;
     int32_t char_difficulty = 1;
-    std::string char_player_name = "主角";
+    std::string char_player_name = "\xD6\xF7\xBD\xC7";  // 主角 (GBK)
 
     // Dialogue
     dlzr::presentation::DialogueRenderer dialogue_renderer;

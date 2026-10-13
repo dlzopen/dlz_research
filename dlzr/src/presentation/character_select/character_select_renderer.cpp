@@ -57,9 +57,27 @@ void CharacterSelectRenderer::render(int32_t selected_portrait,
                         DIFFICULTY_Y, zone_width, DIFFICULTY_HEIGHT,
                         255, 255, 0);
 
-    // Draw player name
+    // Draw player name (GBK encoded)
     if (!player_name.empty()) {
         font_->draw_text(50, 340, player_name.c_str(), 255, 255, 255);
+    }
+
+    // Draw 3 buttons with text (BUTTON22.IMG has 2 states: 88×32 each)
+    // Button 0: 更改, Button 1: 确定, Button 2: 取消
+    const char* button_labels[3] = {
+        "\xB8\xFC\xB8\xC4",  // 更改
+        "\xC8\xB7\xB6\xA8",  // 确定
+        "\xC8\xA1\xCF\xFB",  // 取消
+    };
+    for (int i = 0; i < 3; ++i) {
+        // Draw button background (use first 32px of BUTTON22.IMG)
+        images_->draw_image("BUTTON22.IMG", BUTTON_X[i], BUTTON_Y, 88, 32);
+        // Draw button text centered
+        int32_t text_w, text_h;
+        font_->measure_text(button_labels[i], text_w, text_h);
+        int32_t text_x = BUTTON_X[i] + (BUTTON_WIDTH - text_w) / 2;
+        int32_t text_y = BUTTON_Y + (BUTTON_HEIGHT - text_h) / 2;
+        font_->draw_text(text_x, text_y, button_labels[i], 255, 255, 255);
     }
 }
 
