@@ -15,6 +15,7 @@ namespace dlzr::logic {
 
 enum class GameMode {
     TITLE,
+    CHARACTER_SELECT,
     INIT,
     STRATEGIC_MAP,
     TOWN,

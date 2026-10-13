@@ -17,6 +17,8 @@
 #include "presentation/animation/animation_player.hpp"
 #include "presentation/title/title_renderer.hpp"
 #include "presentation/title/title_input.hpp"
+#include "presentation/character_select/character_select_renderer.hpp"
+#include "presentation/character_select/character_select_input.hpp"
 #include "presentation/dialogue/dialogue_renderer.hpp"
 #include "presentation/dialogue/dialogue_input.hpp"
 #include "presentation/battle/battle_renderer.hpp"
@@ -198,6 +200,16 @@ int main(int argc, char* argv[]) {
     title_renderer.init(*platform, font, images);
     dlzr::presentation::TitleInput title_input;
     int32_t title_selected = 0;
+
+    // Character selection screen
+    dlzr::presentation::CharacterSelectRenderer char_select_renderer;
+    char_select_renderer.init(*platform, font, images, face_loader);
+    dlzr::presentation::CharacterSelectInput char_select_input;
+    int32_t char_selected_portrait = 0;
+    int32_t char_selected_formation = 0;
+    int32_t char_slider_value = 80;
+    int32_t char_difficulty = 1;
+    std::string char_player_name = "主角";
 
     // Dialogue
     dlzr::presentation::DialogueRenderer dialogue_renderer;
@@ -413,7 +425,7 @@ int main(int argc, char* argv[]) {
                 auto action = title_input.process_event(event, title_selected);
                 if (action == dlzr::presentation::TitleAction::NEW_GAME) {
                     // 初出茅庐 - New game (go to character selection)
-                    gsm.set_mode(dlzr::logic::GameMode::LEVEL_SELECT);
+                    gsm.set_mode(dlzr::logic::GameMode::CHARACTER_SELECT);
                 } else if (action == dlzr::presentation::TitleAction::CONTINUE) {
                     // 继往开来 - Continue/Load game
                     gsm.set_save_load_mode(1);  // Load mode
@@ -426,6 +438,22 @@ int main(int argc, char* argv[]) {
                     // 部队休整 - Rest Troops (not implemented)
                 } else if (action == dlzr::presentation::TitleAction::EXIT) {
                     running = false;
+                }
+                break;
+            }
+
+            case dlzr::logic::GameMode::CHARACTER_SELECT: {
+                auto action = char_select_input.process_event(
+                    event, char_selected_portrait, char_selected_formation,
+                    char_slider_value, char_difficulty, char_player_name);
+                if (action == dlzr::presentation::CharacterSelectAction::CONFIRM) {
+                    // 确定 - Confirm character selection, start game
+                    gsm.set_mode(dlzr::logic::GameMode::STRATEGIC_MAP);
+                } else if (action == dlzr::presentation::CharacterSelectAction::CANCEL) {
+                    // 取消 - Cancel, return to title
+                    gsm.set_mode(dlzr::logic::GameMode::TITLE);
+                } else if (action == dlzr::presentation::CharacterSelectAction::CHANGE) {
+                    // 更改 - Change (not implemented)
                 }
                 break;
             }
@@ -1010,6 +1038,14 @@ int main(int argc, char* argv[]) {
         switch (gsm.mode()) {
         case dlzr::logic::GameMode::TITLE:
             title_renderer.render(title_selected, gsm.difficulty_level());
+            break;
+
+        case dlzr::logic::GameMode::CHARACTER_SELECT:
+            char_select_renderer.render(char_selected_portrait,
+                                        char_selected_formation,
+                                        char_slider_value,
+                                        char_difficulty,
+                                        char_player_name);
             break;
 
         case dlzr::logic::GameMode::STRATEGIC_MAP:

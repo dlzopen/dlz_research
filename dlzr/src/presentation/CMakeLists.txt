@@ -29,6 +29,8 @@ add_library(dlzr_presentation STATIC
     strategic/level_select_input.cpp
     title/title_renderer.cpp
     title/title_input.cpp
+    character_select/character_select_renderer.cpp
+    character_select/character_select_input.cpp
     dialogue/dialogue_renderer.cpp
     dialogue/dialogue_input.cpp
     ending/ending_renderer.cpp
