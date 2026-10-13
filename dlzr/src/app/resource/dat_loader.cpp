@@ -155,9 +155,9 @@ std::vector<std::string> DatLoader::load_dialogues() const {
     while (pos < text.size()) {
         // Find entry start: 3 digits followed by space
         if (pos + 4 < text.size() &&
-            std::isdigit(text[pos]) &&
-            std::isdigit(text[pos+1]) &&
-            std::isdigit(text[pos+2]) &&
+            std::isdigit(static_cast<unsigned char>(text[pos])) &&
+            std::isdigit(static_cast<unsigned char>(text[pos+1])) &&
+            std::isdigit(static_cast<unsigned char>(text[pos+2])) &&
             text[pos+3] == ' ') {
 
             // Find entry end: CR LF
