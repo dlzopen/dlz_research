@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -34,8 +35,91 @@ struct GameData {
     // Runtime state (maps to globals in the 28 save data blocks)
     int32_t current_fight_index{0};   // fight_index @ 0x7D06A0
     int32_t current_town{0};          // town @ 0x7D0484
+    // 剧情进度标记 / Story progress flags
+    // 原作地址 / Original: DAT_0095EAF8, 14 × int32_t, Block 12 (56 bytes)
+    // 索引→地址映射 / Index→address mapping:
+    //   [0] +0x00 DAT_0095eaf8   [1] +0x04 DAT_0095eafc   [2] +0x08 DAT_0095eb00
+    //   [3] +0x0c DAT_0095eb04   [4] +0x10 DAT_0095eb08   [5] +0x14 DAT_0095eb0c
+    //   [6] +0x18 DAT_0095eb10   [7] +0x1c DAT_0095eb14   [8] +0x20 DAT_0095eb18
+    //   [9] +0x24 DAT_0095eb1c  [10] +0x28 DAT_0095eb20  [11] +0x2c DAT_0095eb24
+    //  [12] +0x30 DAT_0095eb28  [13] +0x34 DAT_0095eb2c
+    // 使用场景 / Used by:
+    //   [2] DAT_0095eb00: Level 36 position trigger (FUN_00409C99)
+    //   [5] DAT_0095eb0c: Level 2 completion flag (FUN_00407002)
+    //   [6] DAT_0095eb10: Level 3 map feature (FUN_00407049)
+    //   [7] DAT_0095eb14: Level 1 map feature (FUN_00406F96)
+    //  [10] DAT_0095eb20: Level 6 map feature (FUN_0040714D)
+    //  [11] DAT_0095eb24: Level 8 completion flag (FUN_00407224)
+    //  [12] DAT_0095eb28: Level 7 story flag (FUN_004071CA)
     std::array<int32_t, 14> story_flags{};
     std::array<uint16_t, 160> warehouse{};  // 仓库物品数量 / Warehouse item quantities
+
+    // Block 2: 难度 / Difficulty (0=Easy, 1=Normal, 2=Hard) @ 0x7DB578
+    int32_t difficulty{1};
+
+    // Block 7: 隐藏关卡积分 / Hidden level score @ 0x6223A8
+    int32_t hidden_level_score{0};
+
+    // Block 9: 战斗结果标量 / Battle result scalar @ 0x7D069C
+    int32_t battle_result_scalar{0};
+
+    // Block 11: 城镇状态数组 / Town state array [19] @ 0x7CDCB0
+    std::array<uint32_t, 19> town_states{};
+
+    // Block 13: 职业状态复合块 / Class state composite block (380 bytes)
+    // Layout: [0-11] header, [12] ending_flag_0, [16] ending_flag_7,
+    //         [20] ally_mode, [24] battle_phase, [28] ending_flag_third, [32-379] class_states[87]
+    int32_t ending_flag_protagonist{0};   // @ offset 0x0C in block (DAT_007d06d4)
+    int32_t ending_flag_xiaofei{0};       // @ offset 0x10 in block (DAT_007d06d8)
+    int32_t ally_mode_flag{0};            // @ offset 0x14 in block
+    int32_t battle_phase_2{0};            // @ offset 0x18 in block
+    int32_t ending_flag_third{0};         // @ offset 0x24 in block (DAT_007d06ec)
+    std::array<uint32_t, 87> class_states{};  // @ offset 0x20 in block (skips 0x24)
+
+    // Block 20: 角色状态数组 / Character state array [40] @ 0x95EB30
+    std::array<uint16_t, 40> character_states{};
+
+    // Block 25: 战斗计数器 / Combat counters [3] @ 0x8331F0
+    // [0]=survival_count, [1]=unknown, [2]=kill_count
+    std::array<uint32_t, 3> combat_counters{};
+
+    // Block 27: 游戏帧计数 / Game tick counter @ 0x584388
+    uint32_t game_tick{0};
+
+    // 战斗缓存 / Cached battle data (only valid during/after battle)
+    core::FightIntro cached_fight_intro{};  // Block 4 @ 0x7D01C8
+    std::array<core::Fighter, 128> fighter_array{};   // Block 14 @ 0x96AB90
+    std::array<core::Fighter, 128> fighter_mirror{};   // Block 15 @ 0x7D93A8
+    std::array<uint16_t, 160> battle_warehouse{};      // Block 19 @ 0x7DB3A8
+    std::array<uint16_t, 16384> map_grid{};             // Block 22 @ 0x962790
+    int32_t map_width{128};                             // Block 5 @ 0x962788
+    int32_t grid_camera_col{0};                         // Block 23 @ 0x7D0C48
+    int32_t grid_camera_row{0};                         // Block 23 @ 0x7D0C4C
+    std::array<uint32_t, 7> box_state{};                // Block 24 @ 0x7D06A8
+
+    // 进度/资源计数器 / Progression & resource counters (DAT_0057bdXX)
+    int32_t progression_counter{0};   // DAT_0057bd68: game progression
+    int32_t resource_counter{0};      // DAT_0057bd8a: resource increment
+
+    // 战略标记 / Strategic markers
+    int32_t state_marker{0};          // DAT_007d081c: state/phase marker for hidden level branching
+    int32_t battle_counter{0};        // DAT_0057bdc0: battles completed counter
+    int32_t turn_counter{0};          // DAT_00475aa4: turn/round counter for strategic events
+
+    // 场景标记数组 / Scenario flags (DAT_007cdcb0..DAT_007cdcf4)
+    // 索引 = (地址 - 0x7cdcb0) / 4, 共19个条目
+    // Index = (address - 0x7cdcb0) / 4, 19 entries
+    // Used by Table 4 strategic callbacks to track progression
+    std::array<int32_t, 19> scenario_flags{};
+
+    // 原始全局写入 / Raw global writes (RE addresses without named fields)
+    // 地址→值映射，用于尚未分配语义字段的原作全局变量
+    // Address→value map for original globals without dedicated fields
+    std::map<int32_t, int32_t> raw_globals;
+
+    // 关卡事件阶段 / Level event phases (per-level state machine variables)
+    // DAT_007d06c8..DAT_007d0820: phase trackers for each level's callback
+    std::array<int32_t, 47> level_phases{};
 
     // 锻造系统运行时 / Forging system runtime
     std::array<int32_t, 10> material_inventory{};   // 材料库存 / Material stock

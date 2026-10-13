@@ -10,6 +10,35 @@
 
 namespace dlzr::logic {
 
+// 地形防御加成表 / Terrain defense bonus table
+// RE: terrain_defense_table @ 0x00475AB0, 20-byte stride, first field = bonus %
+// Simplified for remake: index = terrain type, value = defense bonus percentage
+static constexpr std::array<int32_t, 16> TERRAIN_DEFENSE_BONUS = {
+    0,   // 0: 平地 / Plain
+    10,  // 1: 草地 / Grass
+    20,  // 2: 树林 / Forest
+    30,  // 3: 山地 / Mountain
+    15,  // 4: 丘陵 / Hill
+    25,  // 5: 沼泽 / Swamp
+    0,   // 6: 河流 / River (impassable)
+    0,   // 7: 未知 / Unknown
+    0,   // 8: 未知 / Unknown
+    0,   // 9: 未知 / Unknown
+    0,   // 10: 未知 / Unknown
+    0,   // 11: 未知 / Unknown
+    0,   // 12: 未知 / Unknown
+    0,   // 13: 未知 / Unknown
+    0,   // 14: 未知 / Unknown
+    0,   // 15: 障碍 / Obstacle (99 mapped here)
+};
+
+int32_t get_terrain_defense_bonus(int32_t terrain_type) {
+    if (terrain_type < 0 || terrain_type >= static_cast<int32_t>(TERRAIN_DEFENSE_BONUS.size())) {
+        return 0;
+    }
+    return TERRAIN_DEFENSE_BONUS[terrain_type];
+}
+
 int32_t calc_max_hp(const core::People& person,
                     const core::ClassType& class_type) {
     return class_type.hp_base

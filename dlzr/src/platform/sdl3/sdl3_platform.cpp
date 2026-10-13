@@ -15,6 +15,17 @@ bool Sdl3Platform::init(const PlatformConfig& config) {
         return false;
     }
 
+    // 初始化 SDL3_mixer / Initialize SDL3_mixer
+#ifdef DLZR_HAS_SDL3_MIXER
+    if (!Mix_Init(MIX_INIT_MP3 | MIX_INIT_OGG)) {
+        std::fprintf(stderr, "Mix_Init failed: %s\n", Mix_GetError());
+    }
+
+    if (Mix_OpenAudio(0, nullptr) < 0) {
+        std::fprintf(stderr, "Mix_OpenAudio failed: %s\n", Mix_GetError());
+    }
+#endif
+
     // 计算窗口尺寸 / Calculate window size
     int32_t window_width = config.width * config.render_scale;
     int32_t window_height = config.height * config.render_scale;
@@ -77,6 +88,17 @@ void Sdl3Platform::shutdown() {
     }
     sounds_.clear();
 
+    if (current_music_) {
+#ifdef DLZR_HAS_SDL3_MIXER
+        Mix_FreeMusic(current_music_);
+#endif
+        current_music_ = nullptr;
+    }
+#ifdef DLZR_HAS_SDL3_MIXER
+    Mix_CloseAudio();
+    Mix_Quit();
+#endif
+
     if (audio_device_) {
         SDL_CloseAudioDevice(audio_device_);
         audio_device_ = 0;
@@ -124,6 +146,11 @@ bool Sdl3Platform::poll_event(Event& out_event) {
                 out_event.type = Event::Type::MouseMove;
                 out_event.mouse_x = static_cast<int32_t>(sdl_event.motion.x);
                 out_event.mouse_y = static_cast<int32_t>(sdl_event.motion.y);
+                return true;
+            case SDL_EVENT_MOUSE_WHEEL:
+                out_event.type = Event::Type::MouseWheel;
+                out_event.wheel_x = static_cast<int32_t>(sdl_event.wheel.x);
+                out_event.wheel_y = static_cast<int32_t>(sdl_event.wheel.y);
                 return true;
 
             // Touch events
@@ -330,6 +357,54 @@ bool Sdl3Platform::is_sound_playing(AudioHandle handle) {
         it->second.playing = false;
     }
     return it->second.playing;
+}
+
+bool Sdl3Platform::play_music(const std::string& path, bool loop) {
+#ifdef DLZR_HAS_SDL3_MIXER
+    if (current_music_) {
+        Mix_HaltMusic();
+        Mix_FreeMusic(current_music_);
+        current_music_ = nullptr;
+    }
+
+    current_music_ = Mix_LoadMUS(path.c_str());
+    if (!current_music_) {
+        std::fprintf(stderr, "Mix_LoadMUS failed: %s (path: %s)\n", Mix_GetError(), path.c_str());
+        return false;
+    }
+
+    int loops = loop ? -1 : 0;
+    if (Mix_PlayMusic(current_music_, loops) < 0) {
+        std::fprintf(stderr, "Mix_PlayMusic failed: %s\n", Mix_GetError());
+        Mix_FreeMusic(current_music_);
+        current_music_ = nullptr;
+        return false;
+    }
+
+    return true;
+#else
+    (void)path; (void)loop;
+    return false;
+#endif
+}
+
+void Sdl3Platform::stop_music() {
+#ifdef DLZR_HAS_SDL3_MIXER
+    if (current_music_) {
+        Mix_HaltMusic();
+        Mix_FreeMusic(current_music_);
+        current_music_ = nullptr;
+    }
+#endif
+}
+
+void Sdl3Platform::set_music_volume(int32_t volume) {
+#ifdef DLZR_HAS_SDL3_MIXER
+    // SDL_mixer volume: 0-128
+    Mix_VolumeMusic(volume);
+#else
+    (void)volume;
+#endif
 }
 
 void Sdl3Platform::delay_ms(uint32_t ms) {

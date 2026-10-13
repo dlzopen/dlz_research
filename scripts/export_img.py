@@ -85,7 +85,9 @@ if __name__ == "__main__":
     export('END01.IMG')
     export('END02.IMG')
     export('END03.IMG')
-    # export('END04.IMG') // 320 X 200
+    # export('END04.IMG')  # ANOMALY: header says 640x480 but data is 320x200 (64784 bytes).
+    # Header matches END00 (640x480, 307984 bytes) but file is truncated/wrong size.
+    # Actual image data is 320x200 with a complete scene. See export_end04.py for recovery.
     export('END05.IMG')
     export('FRAME00.IMG')
     export('JZ-1.IMG')

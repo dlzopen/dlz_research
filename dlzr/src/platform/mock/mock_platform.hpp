@@ -47,6 +47,10 @@ public:
     void stop_sound(AudioHandle handle) override;
     bool is_sound_playing(AudioHandle handle) override;
 
+    bool play_music(const std::string& path, bool loop = true) override;
+    void stop_music() override;
+    void set_music_volume(int32_t volume) override;
+
     void delay_ms(uint32_t ms) override;
     uint32_t ticks_ms() override;
 

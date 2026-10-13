@@ -30,7 +30,8 @@ enum class GameMode {
     BATTLE_RESULT,
     DIALOGUE,
     CUTSCENE,
-    ENDING
+    ENDING,
+    HIDDEN_LEVEL_CHOICE,
 };
 
 class GameStateManager {
@@ -77,13 +78,14 @@ public:
     bool is_narrative_mode_unlocked() const;
 
     // 结局标记系统 / Ending flag system
-    int32_t ending_flag_1() const { return ending_flag_1_; }
-    int32_t ending_flag_2() const { return ending_flag_2_; }
-    int32_t ending_flag_3() const { return ending_flag_3_; }
+    // These read/write game_data_ fields that are persisted in save files
+    int32_t ending_flag_1() const { return game_data_.ending_flag_protagonist; }
+    int32_t ending_flag_2() const { return game_data_.ending_flag_xiaofei; }
+    int32_t ending_flag_3() const { return game_data_.ending_flag_third; }
 
-    void add_ending_flag_1(int32_t value) { ending_flag_1_ += value; }
-    void add_ending_flag_2(int32_t value) { ending_flag_2_ += value; }
-    void add_ending_flag_3(int32_t value) { ending_flag_3_ += value; }
+    void add_ending_flag_1(int32_t value) { game_data_.ending_flag_protagonist += value; }
+    void add_ending_flag_2(int32_t value) { game_data_.ending_flag_xiaofei += value; }
+    void add_ending_flag_3(int32_t value) { game_data_.ending_flag_third += value; }
 
     // 战斗完成追踪 / Fight completion tracking
     void complete_fight(int32_t fight_index);
@@ -91,6 +93,19 @@ public:
 
     // 结局选择 / Ending selection
     int32_t select_ending() const;
+
+    // 商店系统 / Shop system
+    int32_t get_gold() const { return static_cast<int32_t>(game_data_.warehouse[0]); }
+    void add_gold(int32_t amount);
+    bool can_afford(int32_t price) const { return get_gold() >= price; }
+    bool buy_wupin(int32_t item_index);
+    bool buy_mine(int32_t mine_index);
+
+    // 装备系统 / Equipment system
+    bool equip_item(int32_t char_idx, int32_t slot, int32_t item_idx);
+    bool unequip_item(int32_t char_idx, int32_t slot);
+    bool equip_mine(int32_t char_idx, int32_t slot, int32_t mine_idx);
+    bool unequip_mine(int32_t char_idx, int32_t slot);
 
     // 难度系统 / Difficulty system
     int32_t difficulty_level() const { return difficulty_level_; }
@@ -112,13 +127,10 @@ private:
     int32_t difficulty_level_{1};  // 0=简单, 1=普通, 2=困难
     std::array<bool, 47> completed_fights_{};
 
-    // 结局标记 / Ending flags
-    // DAT_007d06d4: 主角柳忻与宿敌关系 / Protagonist 柳忻 relationship with nemesis
-    // DAT_007d06d8: 萧飞与宿敌关系 / 萧飞 relationship with nemesis
-    // DAT_007d06ec: 第三标记 / Third flag
-    int32_t ending_flag_1_{0};  // 柳忻 flag
-    int32_t ending_flag_2_{0};  // 萧飞 flag
-    int32_t ending_flag_3_{0};  // Third flag
+    // 结局标记已移至 game_data_ / Ending flags moved to game_data_
+    // DAT_007d06d4: game_data_.ending_flag_protagonist
+    // DAT_007d06d8: game_data_.ending_flag_xiaofei
+    // DAT_007d06ec: game_data_.ending_flag_third
 };
 
 }  // namespace dlzr::logic

@@ -13,6 +13,7 @@ SettlementResult finalize_battle(const BattleState& state,
                                  core::GameData& game) {
     SettlementResult result;
 
+    // 统计我方损失 / Count allied losses
     for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
         const auto& fighter = state.fighters[i];
         if (fighter.team != 0) continue;
@@ -23,50 +24,47 @@ SettlementResult finalize_battle(const BattleState& state,
 
     if (result.allies_lost > 0) {
         result.death_penalty_applied = true;
-        for (int i = 0; i < core::MAX_PEOPLE; ++i) {
-            auto& person = game.people[i];
-            if (person.level > 1) {
-                person.level -= 1;
-            }
-        }
     }
 
+    // 统计击杀敌人总数（不重复计算）/ Count total enemy kills (no double-counting)
+    int32_t total_enemies_killed = 0;
+    for (int j = 0; j < BattleState::MAX_FIGHTERS; ++j) {
+        const auto& victim = state.fighters[j];
+        if (victim.team == 0) continue;  // skip allies
+        if (victim.stats.current_hp > 0) continue;  // skip survivors
+        if (victim.people_idx < 0) continue;
+        ++total_enemies_killed;
+    }
+    result.fighters_killed = total_enemies_killed;
+
+    // 为每个存活的我方角色分配经验 / Distribute EXP to each surviving ally
+    int32_t survivor_count = 0;
     for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
         const auto& fighter = state.fighters[i];
         if (fighter.team != 0) continue;
         if (fighter.stats.current_hp <= 0) continue;
-        if (fighter.people_idx < 0 || fighter.people_idx >= 88) continue;
+        if (fighter.people_idx < 0 || fighter.people_idx >= core::MAX_PEOPLE) continue;
+        ++survivor_count;
 
-        const auto& fp = fight.people[fighter.people_idx];
-        int32_t people_idx = fighter.people_idx;
-        if (people_idx >= 0 && people_idx < core::MAX_PEOPLE) {
-            auto& person = game.people[people_idx];
+        auto& person = game.people[fighter.people_idx];
+        int32_t exp_gained = 0;
 
-            int32_t exp_gained = 0;
-            for (int j = 0; j < BattleState::MAX_FIGHTERS; ++j) {
-                const auto& victim = state.fighters[j];
-                if (victim.team == 0) continue;
-                if (victim.stats.current_hp > 0) continue;
-                if (victim.people_idx < 0) continue;
+        for (int j = 0; j < BattleState::MAX_FIGHTERS; ++j) {
+            const auto& victim = state.fighters[j];
+            if (victim.team == 0) continue;
+            if (victim.stats.current_hp > 0) continue;
+            if (victim.people_idx < 0) continue;
 
-                const auto& victim_fp = fight.people[victim.people_idx];
-                int32_t base_exp = victim_fp.level * 10;
-                exp_gained += calc_experience(person.level, victim_fp.level, base_exp);
-                ++result.fighters_killed;
-            }
+            const auto& victim_fp = fight.people[victim.people_idx];
+            int32_t base_exp = victim_fp.level * 10;
+            exp_gained += calc_experience(person.level, victim_fp.level, base_exp);
+        }
 
-            if (exp_gained > 0) {
-                person.experience += exp_gained;
-                result.total_exp_gained += exp_gained;
-            }
+        if (exp_gained > 0) {
+            person.experience += exp_gained;
+            result.total_exp_gained += exp_gained;
         }
     }
-
-    result.fighters_killed /= std::max(1, static_cast<int>(
-        std::count_if(state.fighters.begin(), state.fighters.end(),
-            [](const RuntimeFighter& f) {
-                return f.team == 0 && f.is_active && f.stats.current_hp > 0;
-            })));
 
     return result;
 }

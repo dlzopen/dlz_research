@@ -12,6 +12,7 @@ namespace dlzr::presentation {
 class ImageCache {
 public:
     void init(platform::Platform& platform, const std::string& game_data_dir);
+    void set_mod_dir(const std::string& mod_dir);
 
     void draw_image(const std::string& name, int32_t x, int32_t y);
     void draw_image(const std::string& name, int32_t x, int32_t y,
@@ -29,6 +30,7 @@ private:
 
     platform::Platform* platform_{nullptr};
     std::string game_dir_;
+    std::string mod_dir_;
     std::unordered_map<std::string, CachedImage> cache_;
 
     CachedImage& load_or_get(const std::string& name);

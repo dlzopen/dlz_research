@@ -35,6 +35,20 @@ FetchContent_Declare(SDL3
 )
 FetchContent_MakeAvailable(SDL3)
 
+# SDL3_mixer (for BGM playback) — temporarily disabled due to version mismatch
+# FetchContent_Declare(SDL3_mixer
+#     GIT_REPOSITORY https://github.com/libsdl-org/SDL_mixer.git
+#     GIT_TAG release-3.2.x
+#     GIT_SHALLOW TRUE
+# )
+# set(SDL3MIXER_FLAC OFF CACHE BOOL "" FORCE)
+# set(SDL3MIXER_MOD OFF CACHE BOOL "" FORCE)
+# set(SDL3MIXER_OPUS OFF CACHE BOOL "" FORCE)
+# set(SDL3MIXER_WAVPACK OFF CACHE BOOL "" FORCE)
+# set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# FetchContent_MakeAvailable(SDL3_mixer)
+# set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+
 # ============================================================
 # 子模块 / Sub-modules
 # ============================================================
@@ -65,6 +79,13 @@ if(EMSCRIPTEN)
         "SHELL:-s MAX_WEB_IMAGE_SIZE=16777216"
     )
 
+    # 自定义 HTML 模板 / Custom HTML shell
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+        target_link_options(dlzr PRIVATE
+            "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
+        )
+    endif()
+
     # 资源预加载 / Asset preloading
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data")
         target_link_options(dlzr PRIVATE
@@ -91,12 +112,19 @@ option(DLZR_BUILD_TESTS "Build test suite" ON)
 if(DLZR_BUILD_TESTS)
     enable_testing()
 
-    FetchContent_Declare(googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-        GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(googletest)
+    if(FETCHCONTENT_FULLY_DISCONNECTED)
+        # 离线模式：直接使用已下载的源码 / Offline mode: use already downloaded sources
+        if(EXISTS "${CMAKE_BINARY_DIR}/_deps/googletest-src")
+            add_subdirectory(${CMAKE_BINARY_DIR}/_deps/googletest-src ${CMAKE_BINARY_DIR}/_deps/googletest-build)
+        endif()
+    else()
+        FetchContent_Declare(googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG v1.14.0
+            GIT_SHALLOW TRUE
+        )
+        FetchContent_MakeAvailable(googletest)
+    endif()
 
     add_subdirectory(tests)
 endif()

@@ -11,6 +11,12 @@ set(PLATFORM_LINK_LIBS
     SDL3::SDL3
 )
 
+# SDL3_mixer temporarily disabled due to version mismatch
+# if(TARGET SDL3_mixer::SDL3_mixer)
+#     list(APPEND PLATFORM_LINK_LIBS SDL3_mixer::SDL3_mixer)
+#     target_compile_definitions(dlzr_platform PRIVATE DLZR_HAS_SDL3_MIXER)
+# endif()
+
 # 测试构建时添加 Mock 后端 / Add Mock backend for test builds
 if(BUILD_TESTING)
     list(APPEND PLATFORM_SOURCES mock/mock_platform.cpp)

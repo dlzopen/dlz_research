@@ -4,6 +4,21 @@
 
 #include <SDL3/SDL.h>
 
+// Workaround: SDL_ALIGNED missing from SDL3 release-3.2.x
+#ifndef SDL_ALIGNED
+#  if defined(_MSC_VER)
+#    define SDL_ALIGNED(x) __declspec(align(x))
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define SDL_ALIGNED(x) __attribute__((aligned(x)))
+#  else
+#    define SDL_ALIGNED(x)
+#  endif
+#endif
+
+#ifdef DLZR_HAS_SDL3_MIXER
+#include <SDL3_mixer/SDL_mixer.h>
+#endif
+
 #include <unordered_map>
 
 namespace dlzr::platform {
@@ -44,6 +59,10 @@ public:
     void stop_sound(AudioHandle handle) override;
     bool is_sound_playing(AudioHandle handle) override;
 
+    bool play_music(const std::string& path, bool loop = true) override;
+    void stop_music() override;
+    void set_music_volume(int32_t volume) override;
+
     void delay_ms(uint32_t ms) override;
     uint32_t ticks_ms() override;
 
@@ -51,6 +70,11 @@ private:
     SDL_Window* window_{nullptr};
     SDL_Renderer* renderer_{nullptr};
     SDL_AudioDeviceID audio_device_{0};
+#ifdef DLZR_HAS_SDL3_MIXER
+    Mix_Music* current_music_{nullptr};
+#else
+    void* current_music_{nullptr};
+#endif
     std::unordered_map<TextureHandle, SDL_Texture*> textures_;
     TextureHandle next_texture_{1};
 

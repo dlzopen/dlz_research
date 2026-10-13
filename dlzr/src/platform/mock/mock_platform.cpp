@@ -75,6 +75,16 @@ bool MockPlatform::is_sound_playing(AudioHandle /*handle*/) {
     return false;
 }
 
+bool MockPlatform::play_music(const std::string& /*path*/, bool /*loop*/) {
+    return true;
+}
+
+void MockPlatform::stop_music() {
+}
+
+void MockPlatform::set_music_volume(int32_t /*volume*/) {
+}
+
 void MockPlatform::delay_ms(uint32_t ms) {
     current_time_ += ms;
 }

@@ -3,8 +3,8 @@
 // battle_settlement.hpp — 战斗结算
 // Battle settlement / finalization
 //
-// 战斗结束后处理经验分配、死亡惩罚、物品转移。
-// Post-battle: exp distribution, death penalty, item transfer.
+// 战斗结束后处理经验分配、物品转移。死亡惩罚在 process_death 中即时处理。
+// Post-battle: exp distribution, item transfer. Death penalty is in process_death.
 
 #include "logic/battle/battle_state.hpp"
 #include "core/data_model/game_data.hpp"

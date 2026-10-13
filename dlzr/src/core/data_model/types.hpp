@@ -50,7 +50,7 @@ struct People {
     std::array<uint8_t, 8> items;     // +0x74 物品栏 (8格,0=空) / Item slots
     std::array<uint8_t, 8> mines;     // +0x7C 地雷栏 (8格,0=空) / Mine slots
 };
-static_assert(sizeof(People) == 0x84, "People must be 0x84 bytes");
+static_assert(sizeof(People) == 0x84, "People must be 0x84 (132) bytes");
 
 // ============================================================
 // 战斗人员结构体 / Fighter struct
@@ -367,7 +367,7 @@ struct FightPeople {
     std::array<uint8_t, 8> items; // +0x74 物品栏 (8格,0=空)
     std::array<uint8_t, 8> mines; // +0x7C 地雷栏 (8格,0=空)
 };
-static_assert(sizeof(FightPeople) == 132, "FightPeople must be 132 bytes");
+static_assert(sizeof(FightPeople) == 0x84, "FightPeople must be 132 bytes");
 
 // ============================================================
 // TOWN.DAT 磁盘结构体 / TOWN.DAT on-disk struct

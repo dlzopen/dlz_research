@@ -42,6 +42,7 @@ struct Event {
         GamepadButtonDown,
         GamepadButtonUp,
         GamepadAxis,
+        MouseWheel,
     };
 
     Type type{Type::None};
@@ -60,6 +61,10 @@ struct Event {
     int32_t gamepad_button{0};
     float gamepad_axis_value{0.0f};
     int32_t gamepad_axis{0};
+
+    // Mouse wheel
+    int32_t wheel_x{0};
+    int32_t wheel_y{0};
 };
 
 // 纹理句柄 / Texture handle
@@ -102,6 +107,11 @@ public:
                                    int32_t sample_rate = 22050) = 0;
     virtual void stop_sound(AudioHandle handle) = 0;
     virtual bool is_sound_playing(AudioHandle handle) = 0;
+
+    // 背景音乐 / Background music
+    virtual bool play_music(const std::string& path, bool loop = true) = 0;
+    virtual void stop_music() = 0;
+    virtual void set_music_volume(int32_t volume) = 0;  // 0-128
 
     virtual void delay_ms(uint32_t ms) = 0;
     virtual uint32_t ticks_ms() = 0;

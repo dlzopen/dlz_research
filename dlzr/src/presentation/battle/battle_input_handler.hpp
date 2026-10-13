@@ -19,11 +19,16 @@ public:
         COMMAND_MENU,
         MOVE_TARGET,
         ATTACK_TARGET,
+        SKILL_SELECT,
         SKILL_TARGET,
+        ITEM_SELECT,
+        ITEM_TARGET,
         MINE_TARGET,
     };
 
     static constexpr int32_t MENU_ITEM_COUNT = 6;
+    static constexpr int32_t SKILL_SUBMENU_COUNT = 5;
+    static constexpr int32_t ITEM_SUBMENU_COUNT = 4;
 
     void init(int32_t grid_origin_x, int32_t grid_origin_y, int32_t cell_size);
 
@@ -38,6 +43,9 @@ private:
     State state_{State::IDLE};
     int32_t selected_fighter_{-1};
     int32_t menu_hover_item_{-1};
+    int32_t submenu_hover_item_{-1};
+    int32_t pending_skill_idx_{-1};
+    int32_t pending_item_idx_{-1};
 
     int32_t grid_origin_x_{0};
     int32_t grid_origin_y_{0};

@@ -16,6 +16,14 @@
 namespace dlzr::logic {
 
 // ============================================================
+// 地形防御加成查询 / Terrain defense bonus lookup
+//
+// RE: terrain_defense_table @ 0x00475AB0
+// Returns defense bonus percentage for given terrain type
+// ============================================================
+int32_t get_terrain_defense_bonus(int32_t terrain_type);
+
+// ============================================================
 // HP 计算 / HP calculation
 // max_hp = class_hp_base + (level - 1) × class_hp_growth
 // ============================================================

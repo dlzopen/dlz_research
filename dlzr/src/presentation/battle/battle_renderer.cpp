@@ -19,12 +19,31 @@ void BattleRenderer::render(const logic::BattleState& state,
     fight_data_ = &fight_data;
     game_data_ = &game_data;
 
-    images_->draw_image("BG01.IMG", 0, 0);
+    int32_t cur_mines = 0;
+    for (int i = 0; i < 92; ++i) {
+        if (state.grid_mines[i].mine_type > 0) ++cur_mines;
+    }
+    if (cur_mines != last_mine_count_) {
+        grid_dirty_ = true;
+        last_mine_count_ = cur_mines;
+    }
 
-    draw_grid(state);
+    if (grid_dirty_) {
+        images_->draw_image("BG01.IMG", 0, 0);
+        draw_grid(state);
+        grid_dirty_ = false;
+    }
+
     draw_mines(state);
     draw_fighters(state);
-    draw_ui(state);
+    draw_status_effects(state);
+
+    if (state.current_fighter_idx != last_selected_fighter_ ||
+        state.battle_round != last_battle_round_) {
+        draw_ui(state);
+        last_selected_fighter_ = state.current_fighter_idx;
+        last_battle_round_ = state.battle_round;
+    }
 }
 
 void BattleRenderer::draw_grid(const logic::BattleState& state) {
@@ -116,6 +135,47 @@ void BattleRenderer::draw_fighters(const logic::BattleState& state) {
     }
 }
 
+void BattleRenderer::draw_status_effects(const logic::BattleState& state) {
+    for (int i = 0; i < logic::BattleState::MAX_FIGHTERS; ++i) {
+        const auto& fighter = state.fighters[i];
+        if (!fighter.is_active || fighter.stats.current_hp <= 0) continue;
+
+        int16_t flags = fighter.stats.status_flag;
+        if (flags == 0) continue;
+
+        int32_t x = grid_origin_x_ + fighter.grid_x * cell_size_;
+        int32_t y = grid_origin_y_ + fighter.grid_y * cell_size_;
+
+        int32_t icon_size = 6;
+        int32_t ix = x + cell_size_ - icon_size - 1;
+        int32_t iy = y + 1;
+
+        struct StatusIcon {
+            int bit;
+            uint8_t r, g, b;
+        };
+        static constexpr StatusIcon icons[] = {
+            {0, 0,   200, 0  },   // 施毒 poison — green
+            {1, 200, 0,   0  },   // 破坏 defense down — red
+            {2, 200, 200, 0  },   // 骚扰 harassment — yellow
+            {3, 160, 0,   200},   // 威慑 intimidation — purple
+            {4, 0,   180, 200},   // 激励 motivate buff — cyan
+            {5, 200, 128, 0  },   // 督战 supervise — orange
+        };
+
+        int drawn = 0;
+        for (const auto& icon : icons) {
+            if (!(flags & (1 << icon.bit))) continue;
+            int32_t dx = ix - drawn * (icon_size + 1);
+            platform_->fill_rect(dx, iy, icon_size, icon_size,
+                                 icon.r, icon.g, icon.b);
+            platform_->draw_rect(dx, iy, icon_size, icon_size,
+                                 255, 255, 255);
+            ++drawn;
+        }
+    }
+}
+
 void BattleRenderer::draw_hp_bar(int32_t screen_x, int32_t screen_y,
                                   int32_t current_hp, int32_t max_hp) {
     if (max_hp <= 0) return;
@@ -161,6 +221,41 @@ void BattleRenderer::draw_ui(const logic::BattleState& state) {
             // Team label
             const char* team_label = (f.team == 0) ? "\xCE\xD2\xB7\xBD" : "\xB5\xD0\xB7\xBD";
             font_->draw_text(200, 410, team_label, 200, 200, 255);
+
+            // Morale and defense modifier
+            char morale_buf[64];
+            std::snprintf(morale_buf, sizeof(morale_buf),
+                          "Morale: %d  Def: %+d%%",
+                          f.stats.morale,
+                          (f.stats.equip_integrity >= 0) ? f.stats.equip_integrity : 0);
+            font_->draw_text(200, 430, morale_buf, 180, 220, 180);
+
+            // Status effects text
+            if (f.stats.status_flag != 0) {
+                char status_buf[96] = {0};
+                int pos = 0;
+                static const char* status_names[] = {
+                    "\xCA\xA9\xB6\xBE",     // 施毒 poison
+                    "\xC6\xC6\xBB\xB5",     // 破坏 sabotage
+                    "\xCB\xA7\xC8\xC5",     // 骚扰 harass
+                    "\xCD\xFE\xC9\xE6",     // 威慑 intimidate
+                    "\xBC\xA4\xC0\xF8",     // 激励 motivate
+                    "\xB6\xBD\xD5\xBD",     // 督战 supervise
+                };
+                for (int b = 0; b < 6 && pos < 80; ++b) {
+                    if (!(f.stats.status_flag & (1 << b))) continue;
+                    if (pos > 0) {
+                        status_buf[pos++] = ' ';
+                    }
+                    const char* n = status_names[b];
+                    while (*n && pos < 90) {
+                        status_buf[pos++] = *n++;
+                    }
+                }
+                if (pos > 0) {
+                    font_->draw_text(10, 430, status_buf, 255, 180, 100);
+                }
+            }
         }
     }
 

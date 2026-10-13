@@ -44,10 +44,14 @@ void WarehouseRenderer::render(const core::GameData& game_data, int32_t scroll_o
     font_->draw_text(LIST_X + 400, LIST_Y - 28, header_qty, 200, 200, 160);
 
     int32_t row = 0;
+    int32_t skipped = 0;
     for (int32_t i = 0; i < core::MAX_WUPIN && row < VISIBLE_ROWS; ++i) {
         if (game_data.warehouse[i] == 0) continue;
 
-        if (i < scroll_offset) continue;
+        if (skipped < scroll_offset) {
+            skipped++;
+            continue;
+        }
 
         int32_t row_y = LIST_Y + row * ROW_H;
 
@@ -82,6 +86,32 @@ void WarehouseRenderer::render(const core::GameData& game_data, int32_t scroll_o
 
     std::string hint = "ESC \xB7\xB5\xBB\xD8";  // ESC 返回
     font_->draw_text(30, 460, hint, 160, 160, 160);
+}
+
+int32_t WarehouseRenderer::item_at_position(int32_t screen_x, int32_t screen_y,
+                                             const core::GameData& game_data,
+                                             int32_t scroll_offset) const {
+    if (screen_x < 30 || screen_x > 610) return -1;
+    if (screen_y < LIST_Y) return -1;
+
+    int32_t row = 0;
+    int32_t skipped = 0;
+    for (int32_t i = 0; i < core::MAX_WUPIN && row < VISIBLE_ROWS; ++i) {
+        if (game_data.warehouse[i] == 0) continue;
+
+        if (skipped < scroll_offset) {
+            skipped++;
+            continue;
+        }
+
+        int32_t row_y = LIST_Y + row * ROW_H;
+        if (screen_y >= row_y && screen_y < row_y + ROW_H) {
+            return i;
+        }
+
+        row++;
+    }
+    return -1;
 }
 
 }  // namespace dlzr::presentation

@@ -151,4 +151,30 @@ int32_t EquipmentRenderer::char_at_position(int32_t screen_x, int32_t screen_y,
     return -1;
 }
 
+int32_t EquipmentRenderer::item_slot_at_position(int32_t screen_x, int32_t screen_y) const {
+    if (screen_x < INFO_X || screen_x > INFO_X + 280) return -1;
+    if (screen_y < ITEM_START_Y) return -1;
+
+    for (int32_t s = 0; s < 8; ++s) {
+        int32_t row_y = ITEM_START_Y + s * ITEM_ROW_H;
+        if (screen_y >= row_y && screen_y < row_y + ITEM_ROW_H) {
+            return s;
+        }
+    }
+    return -1;
+}
+
+int32_t EquipmentRenderer::mine_slot_at_position(int32_t screen_x, int32_t screen_y) const {
+    if (screen_x < INFO_X + 300 || screen_x > INFO_X + 580) return -1;
+    if (screen_y < ITEM_START_Y) return -1;
+
+    for (int32_t s = 0; s < 8; ++s) {
+        int32_t row_y = ITEM_START_Y + s * ITEM_ROW_H;
+        if (screen_y >= row_y && screen_y < row_y + ITEM_ROW_H) {
+            return s;
+        }
+    }
+    return -1;
+}
+
 }  // namespace dlzr::presentation

@@ -42,6 +42,19 @@ enum class BattlePhase : int32_t {
     CHECK_RESULT = 4,
     VICTORY = 5,
     DEFEAT = 6,
+    DRAW = 7,
+};
+
+enum class TacticalSubState : int32_t {
+    IDLE = 0,
+    AWAITING_MOVE_DEST = 8,
+    AWAITING_ITEM_DEST = 9,
+    SKILL_SELECT = 2,
+    DEFEND = 3,
+    SKILL_TARGET_SELECT = 4,
+    SPECIAL_ACTION = 5,
+    SUB_ACTION_7 = 7,
+    EQUIPMENT_USE = 0xB,
 };
 
 // ============================================================
@@ -86,6 +99,8 @@ struct BattleEvent {
         MESSAGE,
         MINE_PLACED,
         MINE_TRIGGERED,
+        MILESTONE_REACHED,
+        ROUNDS_EXHAUSTED,
     };
 
     Type type{NONE};
@@ -117,17 +132,32 @@ struct BattleState {
     int32_t grid_param_x{0};
     int32_t grid_param_y{0};
 
+    std::array<bool, GRID_COLS * GRID_ROWS> movement_mask{};
+    std::array<bool, GRID_COLS * GRID_ROWS> attack_mask{};
+
     BattlePhase phase{BattlePhase::INIT};
+    TacticalSubState tactical_sub_state{TacticalSubState::IDLE};
     int32_t battle_round{0};
     int32_t current_fighter_idx{0};
     int32_t battle_phase_counter{0};
+    int32_t selected_skill_idx{-1};
+    int32_t selected_item_idx{-1};
 
     bool is_over{false};
     bool is_victory{false};
 
     int32_t max_rounds{0};
-    int32_t victory_condition{0};
+    int32_t victory_condition{0};   // 0=all dead, 1=protect, 2=survive, 3=boss, 4=reach, 5=rescue
     int32_t failure_condition{0};
+
+    // 胜利条件参数 / Victory condition parameters
+    int32_t protect_target_idx{-1};     // people_idx of VIP to protect (condition 1)
+    int32_t survive_round_target{0};    // rounds to survive (condition 2)
+    int32_t boss_target_idx{-1};        // people_idx of boss to defeat (condition 3)
+    int32_t reach_target_people_idx{-1}; // people_idx of fighter who must reach (condition 4)
+    int32_t reach_target_x{-1};         // target grid X (condition 4)
+    int32_t reach_target_y{-1};         // target grid Y (condition 4)
+    int32_t rescue_target_idx{-1};      // people_idx of target to rescue (condition 5)
 
     static constexpr int32_t EVENT_BUFFER_SIZE = 64;
     std::array<BattleEvent, EVENT_BUFFER_SIZE> events;

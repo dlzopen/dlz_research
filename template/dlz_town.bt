@@ -3,7 +3,7 @@
 //
 //      File: dlz_town.bt
 //   Authors: ltg1831
-//   Version: 0.1
+//   Version: 0.3
 //   Purpose: Analyze the file ('town.dat')
 //  Category: Game
 // File Mask: 
@@ -11,39 +11,79 @@
 //   History:
 //   0.1   2022-4-14 ltg1831 first version
 //   0.2   2022-14-03 dlzopen second version.
+//   0.3   2025 dlzopen comprehensive field analysis.
+//         - pad0/pad1 confirmed as sentinel constants
+//         - goods_what[10] confirmed unused (all -1)
+//         - flags[1] = has_animation (only index with non-zero values)
+//         - shop IDs are WuPin indices into GAME.DAT, not GOODS.DAT image indices
+//         - material shop IDs index into Material array (0-9)
+//         - building coords: (0,0) or 999 = absent
+//         - sound3 = -1 means disabled
+//         - loader: VA 0x00429286, buffer 0x7D0D08, stride 346 (0x15A)
+//         - town_index global at 0x962788
 //------------------------------------------------
 
 
 typedef struct {
-    uint32 pad0;
-    uint32 pad1;
-    // 每个城镇有3个背景音频
-    uint32 sound1;
-    uint32 sound1sleep;
-    uint32 sound1stop;
-    uint32 sound2;
-    uint32 sound2sleep;
-    uint32 sound2stop;
-    uint32 sound3;
-    uint32 sound3sleep;
-    uint32 sound3stop;
-    // 名称分别是 "民房","指挥部","军械部","杂货铺","出口","作坊"
-    uint32 name_x[6];
-    uint32 name_y[6];
-    uint32 offest_x[6];
-    uint32 offset_y[6];
-    uint32 goods_what[10];     // 这个地方才应该是材料，但是代码里没有使用，设计和编码人员失误了？！
-    uint32 goods_junxie[12];   // 12 个可卖的军械物品
-    uint32 goods_zahuo[12];    // 12 个可卖的杂货物品
-    uint32 goods_material[12]; // 12 个可卖的材料
+    //--- Header / sentinels (8 bytes) ---
+    uint32 reserved0;          // Always 0. Likely sentinel / unused.
+    uint32 reserved1;          // Always 0xFFFFFFFF (-1). Likely sentinel / version marker.
 
-    ushort  flags[11];         // 索引1为是否带有动画(其它所有字节均未使用)
+    //--- Ambient sound 1 (12 bytes) ---
+    uint32 sound1_id;          // Audio resource ID (range 802-834 across all towns)
+    uint32 sound1_interval;    // Playback interval / delay (range 60-800)
+    uint32 sound1_duration;    // Playback duration / stop time (range 50-100)
+
+    //--- Ambient sound 2 (12 bytes) ---
+    uint32 sound2_id;          // Audio resource ID (range 803-834)
+    uint32 sound2_interval;    // Playback interval (range 70-160)
+    uint32 sound2_duration;    // Playback duration (range 50-80)
+
+    //--- Ambient sound 3 (12 bytes) ---
+    // sound3_id == -1 means this ambient slot is disabled (towns 7, 9, 13, 18)
+    uint32 sound3_id;          // Audio resource ID or -1 (disabled)
+    uint32 sound3_interval;    // Playback interval or -1/999 when disabled
+    uint32 sound3_duration;    // Playback duration or -1/0 when disabled
+
+    //--- Building name label positions (24 bytes each, 6 buildings) ---
+    // Buildings: 0=民房, 1=指挥部, 2=军械部, 3=杂货铺, 4=出口, 5=作坊
+    // (0,0) or value 999 means building is absent from this town.
+    uint32 name_x[6];          // X pixel coordinate of building name label
+    uint32 name_y[6];          // Y pixel coordinate of building name label
+    uint32 click_x[6];         // X pixel coordinate of building click area (offset from name)
+    uint32 click_y[6];         // Y pixel coordinate of building click area (offset from name)
+
+    //--- Unused shop slot IDs (40 bytes) ---
+    // ALL entries are -1 across ALL 19 towns. Confirmed unused by game code.
+    // Original template comment: "设计和编码人员失误了？！"
+    uint32 goods_unused[10];
+
+    //--- Arsenal shop inventory (48 bytes) ---
+    // WuPin indices into GAME.DAT WuPin array (0-159). -1 = end of list.
+    // To get GOODS.DAT image: WuPin[id].img_index -> GOODS.DAT slot.
+    uint32 goods_arsenal[12];
+
+    //--- General store inventory (48 bytes) ---
+    // WuPin indices into GAME.DAT WuPin array (0-159). -1 = end of list.
+    uint32 goods_general[12];
+
+    //--- Material shop inventory (48 bytes) ---
+    // Material indices into GAME.DAT Material array (0-9). -1 = end of list.
+    // Slots [10] and [11] are always 0 (padding to fill 12 slots).
+    uint32 goods_material[12];
+
+    //--- Flags (22 bytes) ---
+    // Only flags[1] has non-zero values: 0 or 1.
+    // flags[1] = 1 means town has animated background (towns 0, 1).
+    // flags[1] = 0 for all other towns.
+    // All other indices (0, 2-10) are always 0 across all 19 towns.
+    ushort  flags[11];
 } Town <read=ReadTown>;
 
 string ReadTown( Town &t )
 {
     string s;
-    SPrintf( s, "%d", t.dat2[1]);
+    SPrintf( s, "anim=%d", t.flags[1]);
     return s;
 }
 

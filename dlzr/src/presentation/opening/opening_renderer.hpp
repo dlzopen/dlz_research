@@ -1,10 +1,7 @@
 #pragma once
 
 // opening_renderer.hpp — 开场动画渲染器
-// Opening sequence renderer
-//
-// 播放游戏开场序列（原作用 MPEG 过场，此处用文本/图片序列替代）。
-// Plays game opening sequence (original used MPEG cutscenes, this uses text/image sequence).
+// Opening sequence renderer with fade transitions and background images
 
 #include "core/data_model/types.hpp"
 #include "logic/game_state_manager.hpp"
@@ -19,30 +16,27 @@
 namespace dlzr::presentation {
 
 struct OpeningScene {
-    std::string text;           // GBK encoded text
-    int32_t background_img;     // Image ID (-1 = no image)
-    int32_t duration_ms;        // Auto-advance time (0 = wait for input)
+    std::string text;
+    int32_t background_img{-1};
+    int32_t duration_ms{0};
+    int32_t fade_in_ms{500};
+    int32_t fade_out_ms{500};
+    int32_t bgm_track{-1};
+    bool text_shadow{true};
+    int32_t text_y{200};
 };
 
 class OpeningRenderer {
 public:
     void init(platform::Platform& platform, FontRenderer& font, ImageCache& images);
 
-    // 开始播放开场序列 / Start opening sequence
     void start(const logic::GameStateManager& gsm);
-
-    // 更新状态 / Update state
-    // 返回 true 表示开场结束 / Returns true when opening is finished
     bool update(uint32_t delta_ms);
-
-    // 渲染当前场景 / Render current scene
     void render();
-
-    // 处理输入（跳过/推进）/ Handle input (skip/advance)
     bool process_input(const platform::Event& event);
 
-    // 是否正在播放 / Is playing
     bool is_playing() const { return playing_; }
+    int32_t requested_bg() const { return requested_bg_; }
 
 private:
     platform::Platform* platform_{nullptr};
@@ -55,8 +49,14 @@ private:
     bool playing_{false};
     bool finished_{false};
 
+    int32_t fade_alpha_{0};
+    bool fading_in_{false};
+    bool fading_out_{false};
+    int32_t requested_bg_{-1};
+
     void build_sequence(const logic::GameStateManager& gsm);
     void advance_scene();
+    int32_t compute_fade_alpha() const;
 };
 
 }  // namespace dlzr::presentation

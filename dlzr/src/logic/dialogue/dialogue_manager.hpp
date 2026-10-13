@@ -45,6 +45,24 @@ public:
     // Returns ordered list of TXT.DAT entry texts for the fight's dialogue group
     std::vector<std::string> resolve_fight_dialogue(int32_t fight_txt) const;
 
+    // 根据fight_txt获取战后对话序列 / Resolve post-battle SubB sequence from fight_txt
+    // SubB = post-battle/alternate dialogue sequence
+    std::vector<std::string> resolve_fight_dialogue_b(int32_t fight_txt) const;
+
+    // 条件对话链解析 / Conditional dialogue chain resolution
+    // Returns dialogue sequence based on game state (story_flags, level_phases)
+    // Implements FUN_00406CE8 chain logic: checks conditions to select alternate groups
+    std::vector<std::string> resolve_conditional_dialogue(
+        int32_t fight_txt,
+        const std::array<int32_t, 14>& story_flags,
+        int32_t level_phase) const;
+
+    // 检查对话链是否应该继续 / Check if dialogue chain should continue
+    // Returns next dialogue group index if chain continues, -1 if chain ends
+    int32_t get_chain_continuation(
+        int32_t current_group,
+        const std::array<int32_t, 14>& story_flags) const;
+
     // 获取对话总数 / Get total dialogue count
     int32_t dialogue_count() const { return static_cast<int32_t>(dialogues_.size()); }
 
@@ -57,6 +75,20 @@ private:
     static constexpr int32_t kFightTxtTable[16] = {
         0x22, 0x23, 0x24, 0x26, 0x28, 0x29, 0x2A, 0x2C,
         0x2E, 0x31, 0x32, 0x33, 0x35, 0x2B, 0x00, 0x63
+    };
+
+    // 条件分支表 / Conditional branch table
+    // [group][condition_type] = alternate_group
+    // condition_type: 0=story_flags[0], 1=story_flags[2], 2=level_phase>0
+    static constexpr int32_t kConditionalBranches[8][3] = {
+        {0, 0, 0},  // Group 0: no alternate
+        {1, 7, 1},  // Group 1: if story_flags[0] → group 7, if level_phase>0 → group 1 (self-loop for phase)
+        {2, 6, 2},  // Group 2: if story_flags[0] → group 6, if level_phase>0 → group 2
+        {3, 3, 3},  // Group 3: no alternate
+        {4, 4, 4},  // Group 4: no alternate
+        {5, 5, 5},  // Group 5: no alternate
+        {2, 6, 2},  // Group 6: same as group 2
+        {1, 7, 1},  // Group 7: same as group 1
     };
 };
 

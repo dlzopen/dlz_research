@@ -12,6 +12,7 @@ add_library(dlzr_presentation STATIC
     battle/battle_intro_renderer.cpp
     battle/battle_result_renderer.cpp
     battle/battle_animation_overlay.cpp
+    battle/battle_animation_controller.cpp
     forging/forging_renderer.cpp
     forging/forging_input.cpp
     promotion/promotion_renderer.cpp

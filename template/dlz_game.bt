@@ -118,12 +118,12 @@ typedef struct {
         uint32 para3;       // 参数3，
         uint32 para4;       // 参数4
         uint32 select_fw;   // 选择范围
-        uint32 apply_fw;    // 应用范围
-        uint32 pad7;        // 代码里没有这个字段的应用
-        uint32 pad8;        // 代码里没有这个字段的应用
-        uint32 audio_get;   // 拾取音效
-        uint32 audio_apply; // 使用音效
-    }WuPin <read=ReadWuPin>;
+        uint32 use_count;   // 使用次数? (values 0-5)
+        uint32 pad7;        // 代码里没有这个字段的应用 (always 0)
+        uint32 pad8;        // 代码里没有这个字段的应用 (always 0)
+        uint32 flm_index;   // 动画索引 flm.dat (values 500-530)
+        uint32 audio_index; // 声音索引 wave.dat (values 500-530)
+    }WuPin <read=ReadWuPin>; // 72 bytes: 16 + 8 + 12*4
 
     typedef struct {
         char   name[0x10];
@@ -138,15 +138,15 @@ typedef struct {
 
     typedef struct {
         char   name[0x10];
+        uint32 pad0;       // 代码里没有这个字段的应用 (always 0, was misidentified as price)
         uint32 price;
         int32  weili;
         int32  shiqi_or_tili;// 1:士气 0:体力
         int32  apply_fw;
         int32  pad3;      // 代码里没有这个字段的应用
-        int32  pad4;      // 代码里没有这个字段的应用
         int32  flm_index;
         int32  audio_index;
-    }DiLei <read=ReadDiLei>;
+    }DiLei <read=ReadDiLei>; // 48 bytes: 16 + 8*4
 
     typedef struct {
         char name[0x10];
@@ -206,7 +206,7 @@ string ReadBingZhong(BingZhong &b)
 string ReadWuPin( WuPin &w )
 {
     string s;
-    SPrintf( s, "%s<%d, %d>", w.name, w.pad7, w.pad8);
+    SPrintf( s, "%s<%d, flm:%d, snd:%d>", w.name, w.use_count, w.flm_index, w.audio_index);
     return s;
 }
 

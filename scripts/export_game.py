@@ -214,18 +214,18 @@ class WuPin(Item):
         self.para2 = struct.unpack('I', file.read(4))[0]
         self.para3 = struct.unpack('I', file.read(4))[0]
         self.para4 = struct.unpack('I', file.read(4))[0]
-        self.apply = struct.unpack('I', file.read(4))[0]
-        pad = file.read(0x4)
-        pad = file.read(0x4)
-        pad = file.read(0x4)
-        pad = file.read(0x4)
-        pad = file.read(0x4)
+        self.select_fw = struct.unpack('I', file.read(4))[0]   # offset 48: 选择范围
+        self.use_count = struct.unpack('I', file.read(4))[0]   # offset 52: 使用次数? (values 0-5)
+        self.pad7 = struct.unpack('I', file.read(4))[0]        # offset 56: always 0
+        self.pad8 = struct.unpack('I', file.read(4))[0]        # offset 60: always 0
+        self.flm_index = struct.unpack('I', file.read(4))[0]   # offset 64: 动画索引 (values 500-530)
+        self.audio_index = struct.unpack('I', file.read(4))[0] # offset 68: 声音索引 (values 500-530)
 
     def tile(self):
-        return '单位,图片,价值,参数1,参数2,参数3,参数4,应用范围'
+        return '单位,图片,价值,参数1,参数2,参数3,参数4,选择范围,使用次数,动画,声音'
 
     def export(self):
-        return f'{self.uint_},x{self.img_index:02d},{self.price},{self.para1},{self.para2},{self.para3},{self.para4},{self.apply}'
+        return f'{self.uint_},x{self.img_index:02d},{self.price},{self.para1},{self.para2},{self.para3},{self.para4},{self.select_fw},{self.use_count},{self.flm_index},{self.audio_index}'
 
     @staticmethod
     def len():
@@ -235,14 +235,20 @@ class DiLei(Item):
     '''地雷，10种'''
     def read(self, file):
         self.name_ = file.read(0x10).decode('gbk', errors='ignore').strip(' \x00')
+        self.pad0 = struct.unpack('I',file.read(0x4))[0]  # padding, always 0
         self.price = struct.unpack('I',file.read(0x4))[0]
-        self.pad = file.read(0x1C)
+        self.weili = struct.unpack('I',file.read(0x4))[0]
+        self.shiqi_or_tili = struct.unpack('i',file.read(0x4))[0]
+        self.apply_fw = struct.unpack('i',file.read(0x4))[0]
+        self.pad3 = struct.unpack('i',file.read(0x4))[0]
+        self.flm_index = struct.unpack('i',file.read(0x4))[0]
+        self.audio_index = struct.unpack('i',file.read(0x4))[0]
 
     def tile(self):
-        return '价格'
+        return '价格,威力,士气/体力,应用范围,动画,声音'
 
     def export(self):
-        return f'{self.price}'
+        return f'{self.price},{self.weili},{self.shiqi_or_tili},{self.apply_fw},{self.flm_index},{self.audio_index}'
     
     @staticmethod
     def len():

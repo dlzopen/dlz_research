@@ -11,6 +11,11 @@ void ImageCache::init(platform::Platform& platform,
     game_dir_ = game_data_dir;
 }
 
+void ImageCache::set_mod_dir(const std::string& mod_dir) {
+    mod_dir_ = mod_dir;
+    cache_.clear();
+}
+
 ImageCache::CachedImage& ImageCache::load_or_get(const std::string& name) {
     auto it = cache_.find(name);
     if (it != cache_.end()) {
@@ -20,7 +25,17 @@ ImageCache::CachedImage& ImageCache::load_or_get(const std::string& name) {
     CachedImage img;
     try {
         namespace fs = std::filesystem;
-        fs::path path = fs::path(game_dir_) / name;
+        fs::path path;
+
+        if (!mod_dir_.empty()) {
+            fs::path mod_path = fs::path(mod_dir_) / name;
+            if (fs::exists(mod_path)) {
+                path = mod_path;
+            }
+        }
+        if (path.empty()) {
+            path = fs::path(game_dir_) / name;
+        }
 
         auto decoded = app::ImgLoader::load(path);
         auto rgba = app::ImgLoader::to_rgba(decoded);

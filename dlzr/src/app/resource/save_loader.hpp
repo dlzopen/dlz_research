@@ -17,6 +17,13 @@ namespace dlzr::app {
 
 namespace fs = std::filesystem;
 
+struct SaveInfo {
+    bool exists{false};
+    int32_t fight_index{0};
+    int32_t current_town{0};
+    int32_t gold{0};
+};
+
 class SaveLoader {
 public:
     explicit SaveLoader(fs::path save_dir) : save_dir_(std::move(save_dir)) {}
@@ -26,6 +33,7 @@ public:
 
     bool slot_exists(int32_t slot) const;
     std::string get_save_path(int32_t slot) const;
+    SaveInfo peek_save_info(int32_t slot) const;
 
 private:
     fs::path save_dir_;

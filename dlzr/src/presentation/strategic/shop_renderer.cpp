@@ -35,6 +35,12 @@ void ShopRenderer::render(const core::Town& town, ShopType shop_type,
 
     font_->draw_text(NAME_X, 44, "\xC3\xFB\xB3\xC6", 200, 200, 150);
     font_->draw_text(PRICE_X, 44, "\xBC\xDB\xB8\xF1", 200, 200, 150);
+    font_->draw_text(QTY_X, 44, "\xD2\xD3\xD3\xD0", 200, 200, 150);
+
+    int32_t gold = static_cast<int32_t>(game_data.warehouse[0]);
+    char gold_buf[48];
+    std::snprintf(gold_buf, sizeof(gold_buf), "\xBD\xF0\xC7\xAE: %d", gold);
+    font_->draw_text(420, 8, gold_buf, 255, 220, 100);
 
     const int32_t* items = nullptr;
     int32_t count = 0;
@@ -83,13 +89,33 @@ void ShopRenderer::render(const core::Town& town, ShopType shop_type,
 
         char price_buf[32];
         format_price(price_buf, sizeof(price_buf), price);
-        font_->draw_text(PRICE_X, y + 4, price_buf, 255, 220, 100);
+        uint8_t pr = 255, pg = 220, pb = 100;
+        if (static_cast<int32_t>(game_data.warehouse[0]) < price) {
+            pr = 180; pg = 80; pb = 80;
+        }
+        font_->draw_text(PRICE_X, y + 4, price_buf, pr, pg, pb);
+
+        int32_t owned = 0;
+        if (shop_type == ShopType::MATERIAL) {
+            int32_t wh_slot = core::MAX_WUPIN - core::MAX_DILEI + items[i];
+            if (wh_slot >= 0 && wh_slot < static_cast<int32_t>(game_data.warehouse.size())) {
+                owned = game_data.warehouse[wh_slot];
+            }
+        } else {
+            int32_t wh_slot = items[i];
+            if (wh_slot >= 0 && wh_slot < static_cast<int32_t>(game_data.warehouse.size())) {
+                owned = game_data.warehouse[wh_slot];
+            }
+        }
+        char qty_buf[16];
+        std::snprintf(qty_buf, sizeof(qty_buf), "%d", owned);
+        font_->draw_text(QTY_X, y + 4, qty_buf, 200, 255, 200);
 
         ++displayed;
     }
 
     platform_->fill_rect(0, 450, 640, 30, 50, 50, 50);
-    font_->draw_text(10, 456, "\xB5\xE3\xBB\xF7\xD3\xD2\xBC\xFC\xCD\xCB\xB3\xF6", 200, 200, 200);
+    font_->draw_text(10, 456, "\xD7\xF3\xBC\xFC\xB9\xBA\xC2\xF2  \xD3\xD2\xBC\xFC\xCD\xCB\xB3\xF6", 200, 200, 200);
 }
 
 int32_t ShopRenderer::item_at_position(int32_t screen_x, int32_t screen_y,

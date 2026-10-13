@@ -60,7 +60,101 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                                                         const logic::BattleState& state) {
     logic::BattleCommand cmd;
 
+    if (event.type == platform::Event::Type::KeyDown) {
+        if (event.key == 0x1B) {
+            switch (state_) {
+            case State::SKILL_SELECT:
+            case State::ITEM_SELECT:
+                state_ = State::FIGHTER_SELECTED;
+                pending_skill_idx_ = -1;
+                pending_item_idx_ = -1;
+                break;
+            case State::ATTACK_TARGET:
+            case State::SKILL_TARGET:
+            case State::MOVE_TARGET:
+            case State::MINE_TARGET:
+            case State::ITEM_TARGET:
+                state_ = State::FIGHTER_SELECTED;
+                pending_skill_idx_ = -1;
+                pending_item_idx_ = -1;
+                break;
+            case State::COMMAND_MENU:
+                state_ = State::FIGHTER_SELECTED;
+                break;
+            default:
+                state_ = State::IDLE;
+                selected_fighter_ = -1;
+                break;
+            }
+            return cmd;
+        }
+
+        if (state_ == State::SKILL_SELECT && event.key >= '1' && event.key <= '5') {
+            int32_t idx = event.key - '1';
+            pending_skill_idx_ = idx;
+            cmd.type = logic::BattleCommand::SKILL;
+            cmd.fighter_idx = selected_fighter_;
+            cmd.skill_idx = idx;
+            state_ = State::SKILL_TARGET;
+            return cmd;
+        }
+
+        if (state_ == State::ITEM_SELECT && event.key >= '1' && event.key <= '8') {
+            int32_t idx = event.key - '1';
+            pending_item_idx_ = idx;
+            cmd.type = logic::BattleCommand::USE_ITEM;
+            cmd.fighter_idx = selected_fighter_;
+            cmd.item_idx = idx;
+            state_ = State::IDLE;
+            selected_fighter_ = -1;
+            return cmd;
+        }
+    }
+
     if (event.type == platform::Event::Type::MouseDown) {
+        if (state_ == State::SKILL_SELECT) {
+            if (event.mouse_button == 1) {
+                int32_t sub_x = menu_x_ + MENU_WIDTH;
+                int32_t sub_y = menu_y_;
+                if (event.mouse_x >= sub_x && event.mouse_x < sub_x + MENU_WIDTH) {
+                    int32_t rel_y = event.mouse_y - sub_y;
+                    if (rel_y >= 0 && rel_y < SKILL_SUBMENU_COUNT * MENU_ITEM_HEIGHT) {
+                        int32_t idx = rel_y / MENU_ITEM_HEIGHT;
+                        pending_skill_idx_ = idx;
+                        cmd.type = logic::BattleCommand::SKILL;
+                        cmd.fighter_idx = selected_fighter_;
+                        cmd.skill_idx = idx;
+                        state_ = State::SKILL_TARGET;
+                    }
+                }
+            } else if (event.mouse_button == 3) {
+                state_ = State::FIGHTER_SELECTED;
+            }
+            return cmd;
+        }
+
+        if (state_ == State::ITEM_SELECT) {
+            if (event.mouse_button == 1) {
+                int32_t sub_x = menu_x_ + MENU_WIDTH;
+                int32_t sub_y = menu_y_;
+                if (event.mouse_x >= sub_x && event.mouse_x < sub_x + MENU_WIDTH) {
+                    int32_t rel_y = event.mouse_y - sub_y;
+                    if (rel_y >= 0 && rel_y < ITEM_SUBMENU_COUNT * MENU_ITEM_HEIGHT) {
+                        int32_t idx = rel_y / MENU_ITEM_HEIGHT;
+                        pending_item_idx_ = idx;
+                        cmd.type = logic::BattleCommand::USE_ITEM;
+                        cmd.fighter_idx = selected_fighter_;
+                        cmd.item_idx = idx;
+                        state_ = State::IDLE;
+                        selected_fighter_ = -1;
+                    }
+                }
+            } else if (event.mouse_button == 3) {
+                state_ = State::FIGHTER_SELECTED;
+            }
+            return cmd;
+        }
+
         if (state_ == State::COMMAND_MENU) {
             int32_t hit = hit_test_menu(event.mouse_x, event.mouse_y);
 
@@ -72,16 +166,13 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                             cmd.fighter_idx = selected_fighter_;
                             state_ = State::ATTACK_TARGET;
                             break;
-                        case 1: // 技能 Skill
-                            cmd.type = logic::BattleCommand::SKILL;
-                            cmd.fighter_idx = selected_fighter_;
-                            state_ = State::SKILL_TARGET;
+                        case 1: // 技能 Skill → skill selection submenu
+                            state_ = State::SKILL_SELECT;
+                            submenu_hover_item_ = -1;
                             break;
-                        case 2: // 物品 Item
-                            cmd.type = logic::BattleCommand::USE_ITEM;
-                            cmd.fighter_idx = selected_fighter_;
-                            state_ = State::IDLE;
-                            selected_fighter_ = -1;
+                        case 2: // 物品 Item → item selection submenu
+                            state_ = State::ITEM_SELECT;
+                            submenu_hover_item_ = -1;
                             break;
                         case 3: // 等待 Wait
                             cmd.type = logic::BattleCommand::WAIT;
@@ -103,8 +194,6 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                 }
             } else if (event.mouse_button == 3) {
                 state_ = State::FIGHTER_SELECTED;
-            } else {
-                (void)0;
             }
 
             if (event.mouse_button == 1 || event.mouse_button == 3) {
@@ -143,6 +232,7 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                 grid_y < logic::BattleState::GRID_ROWS) {
                 cmd.type = logic::BattleCommand::SKILL;
                 cmd.fighter_idx = selected_fighter_;
+                cmd.skill_idx = pending_skill_idx_;
                 cmd.target_x = grid_x;
                 cmd.target_y = grid_y;
                 int32_t target = find_fighter_at_grid(grid_x, grid_y, state);
@@ -151,12 +241,42 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                 }
                 state_ = State::IDLE;
                 selected_fighter_ = -1;
+                pending_skill_idx_ = -1;
             }
             return cmd;
         }
 
         if (state_ == State::SKILL_TARGET && event.mouse_button == 3) {
             state_ = State::FIGHTER_SELECTED;
+            pending_skill_idx_ = -1;
+            return cmd;
+        }
+
+        if (state_ == State::ITEM_TARGET && event.mouse_button == 1) {
+            int32_t grid_x = screen_to_grid_x(event.mouse_x);
+            int32_t grid_y = screen_to_grid_y(event.mouse_y);
+            if (grid_x >= 0 && grid_y >= 0 &&
+                grid_x < logic::BattleState::GRID_COLS &&
+                grid_y < logic::BattleState::GRID_ROWS) {
+                cmd.type = logic::BattleCommand::USE_ITEM;
+                cmd.fighter_idx = selected_fighter_;
+                cmd.item_idx = pending_item_idx_;
+                cmd.target_x = grid_x;
+                cmd.target_y = grid_y;
+                int32_t target = find_fighter_at_grid(grid_x, grid_y, state);
+                if (target >= 0) {
+                    cmd.target_idx = target;
+                }
+                state_ = State::IDLE;
+                selected_fighter_ = -1;
+                pending_item_idx_ = -1;
+            }
+            return cmd;
+        }
+
+        if (state_ == State::ITEM_TARGET && event.mouse_button == 3) {
+            state_ = State::FIGHTER_SELECTED;
+            pending_item_idx_ = -1;
             return cmd;
         }
 
@@ -237,11 +357,7 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
             }
         } else if (event.mouse_button == 3) {
             if (state_ == State::FIGHTER_SELECTED) {
-                int32_t fx = grid_origin_x_ + state.fighters[selected_fighter_].grid_x * cell_size_;
-                int32_t fy = grid_origin_y_ + state.fighters[selected_fighter_].grid_y * cell_size_;
                 open_menu(event.mouse_x, event.mouse_y);
-                (void)fx;
-                (void)fy;
             } else {
                 state_ = State::IDLE;
                 selected_fighter_ = -1;

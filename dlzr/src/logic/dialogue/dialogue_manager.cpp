@@ -89,11 +89,101 @@ std::vector<std::string> DialogueManager::resolve_fight_dialogue(int32_t fight_t
     return result;
 }
 
+std::vector<std::string> DialogueManager::resolve_fight_dialogue_b(int32_t fight_txt) const {
+    std::vector<std::string> result;
+
+    int32_t group = get_dialogue_group(fight_txt);
+    const auto& sub_b = dialogue_groups_[group].sub_b;
+
+    for (int32_t entry_id : sub_b) {
+        if (entry_id == 0) break;
+        if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
+            result.push_back(dialogues_[entry_id]);
+        }
+    }
+
+    return result;
+}
+
 const std::string& DialogueManager::get_dialogue_text(int32_t entry_index) const {
     if (entry_index < 0 || entry_index >= static_cast<int32_t>(dialogues_.size())) {
         throw std::out_of_range("dialogue entry index out of range");
     }
     return dialogues_[entry_index];
+}
+
+std::vector<std::string> DialogueManager::resolve_conditional_dialogue(
+    int32_t fight_txt,
+    const std::array<int32_t, 14>& story_flags,
+    int32_t level_phase) const {
+
+    int32_t base_group = get_dialogue_group(fight_txt);
+    int32_t resolved_group = base_group;
+
+    // Check conditional branches (FUN_00406CE8 logic)
+    // Priority: story_flags[2] > story_flags[0] > level_phase
+    if (base_group >= 0 && base_group < 8) {
+        // Check condition 1: story_flags[2] (DAT_0095eb00)
+        if (kConditionalBranches[base_group][1] != base_group &&
+            story_flags[2] > 0) {
+            resolved_group = kConditionalBranches[base_group][1];
+        }
+        // Check condition 0: story_flags[0]
+        else if (kConditionalBranches[base_group][0] != base_group &&
+                 story_flags[0] > 0) {
+            resolved_group = kConditionalBranches[base_group][0];
+        }
+        // Check condition 2: level_phase > 0 (for multi-phase dialogues)
+        else if (kConditionalBranches[base_group][2] != base_group &&
+                 level_phase > 0) {
+            resolved_group = kConditionalBranches[base_group][2];
+        }
+    }
+
+    // Resolve the selected group's SubA sequence
+    std::vector<std::string> result;
+    const auto& sub_a = dialogue_groups_[resolved_group].sub_a;
+
+    for (int32_t entry_id : sub_a) {
+        if (entry_id == 0) break;
+        if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
+            result.push_back(dialogues_[entry_id]);
+        }
+    }
+
+    return result;
+}
+
+int32_t DialogueManager::get_chain_continuation(
+    int32_t current_group,
+    const std::array<int32_t, 14>& story_flags) const {
+
+    // Chain continuation logic (FUN_00406F96)
+    // After completing SubA of current group, check if SubB should follow
+    // or if chain should jump to another group
+
+    if (current_group < 0 || current_group >= core::DIALOGUE_GROUP_COUNT) {
+        return -1;
+    }
+
+    // Check if SubB is non-empty (chain continues within same group)
+    const auto& sub_b = dialogue_groups_[current_group].sub_b;
+    if (sub_b[0] != 0) {
+        return current_group;  // SubB will be played after SubA
+    }
+
+    // Check for cross-group chains based on story flags
+    // Group 1 → Group 7 if story_flags[1] set
+    if (current_group == 1 && story_flags.size() > 1 && story_flags[1] > 0) {
+        return 7;
+    }
+
+    // Group 2 → Group 6 if story_flags[2] set
+    if (current_group == 2 && story_flags.size() > 2 && story_flags[2] > 0) {
+        return 6;
+    }
+
+    return -1;  // Chain ends
 }
 
 core::Dialogue DialogueManager::parse_dialogue(const std::string& entry) {

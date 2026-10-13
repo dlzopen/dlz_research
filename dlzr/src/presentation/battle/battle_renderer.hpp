@@ -19,8 +19,9 @@ public:
                 const core::FightData& fight_data,
                 const core::GameData& game_data);
 
-    void set_grid_origin(int32_t x, int32_t y) { grid_origin_x_ = x; grid_origin_y_ = y; }
-    void set_cell_size(int32_t size) { cell_size_ = size; }
+    void set_grid_origin(int32_t x, int32_t y) { grid_origin_x_ = x; grid_origin_y_ = y; grid_dirty_ = true; }
+    void set_cell_size(int32_t size) { cell_size_ = size; grid_dirty_ = true; }
+    void invalidate() { grid_dirty_ = true; }
 
     void render_command_menu(int32_t menu_x, int32_t menu_y, int32_t hover_item);
     void render_selected_highlight(int32_t grid_x, int32_t grid_y);
@@ -38,9 +39,15 @@ private:
     int32_t grid_origin_y_{40};
     int32_t cell_size_{40};
 
+    bool grid_dirty_{true};
+    int32_t last_selected_fighter_{-1};
+    int32_t last_battle_round_{-1};
+    int32_t last_mine_count_{-1};
+
     void draw_grid(const logic::BattleState& state);
     void draw_mines(const logic::BattleState& state);
     void draw_fighters(const logic::BattleState& state);
+    void draw_status_effects(const logic::BattleState& state);
     void draw_hp_bar(int32_t screen_x, int32_t screen_y, int32_t current_hp, int32_t max_hp);
     void draw_ui(const logic::BattleState& state);
 

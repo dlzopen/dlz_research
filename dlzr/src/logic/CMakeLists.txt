@@ -7,6 +7,7 @@ add_library(dlzr_logic STATIC
     battle/battle_settlement.cpp
     dialogue/dialogue_manager.cpp
     forging/forging_system.cpp
+    level/level_event_manager.cpp
     promotion/promotion_system.cpp
     game_state_manager.cpp
 )

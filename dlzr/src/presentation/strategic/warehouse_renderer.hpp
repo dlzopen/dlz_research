@@ -17,14 +17,17 @@ public:
 
     void render(const core::GameData& game_data, int32_t scroll_offset);
 
-private:
-    platform::Platform* platform_{nullptr};
-    FontRenderer* font_{nullptr};
+    int32_t item_at_position(int32_t screen_x, int32_t screen_y,
+                             const core::GameData& game_data, int32_t scroll_offset) const;
 
     static constexpr int32_t LIST_X = 40;
     static constexpr int32_t LIST_Y = 60;
     static constexpr int32_t ROW_H = 24;
     static constexpr int32_t VISIBLE_ROWS = 15;
+
+private:
+    platform::Platform* platform_{nullptr};
+    FontRenderer* font_{nullptr};
 };
 
 }  // namespace dlzr::presentation

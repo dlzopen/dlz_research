@@ -20,6 +20,9 @@ public:
     int32_t char_at_position(int32_t screen_x, int32_t screen_y,
                              const core::GameData& game_data) const;
 
+    int32_t item_slot_at_position(int32_t screen_x, int32_t screen_y) const;
+    int32_t mine_slot_at_position(int32_t screen_x, int32_t screen_y) const;
+
     static constexpr int32_t CHAR_LIST_X = 20;
     static constexpr int32_t CHAR_LIST_Y = 60;
     static constexpr int32_t CHAR_ROW_H = 28;
@@ -27,6 +30,8 @@ public:
     static constexpr int32_t INFO_Y = 60;
     static constexpr int32_t ITEM_START_Y = 180;
     static constexpr int32_t ITEM_ROW_H = 24;
+    static constexpr int32_t MINE_START_Y = 300;
+    static constexpr int32_t MINE_ROW_H = 24;
 
 private:
     platform::Platform* platform_{nullptr};
