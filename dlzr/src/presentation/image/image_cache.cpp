@@ -1,4 +1,5 @@
 #include "presentation/image/image_cache.hpp"
+#include "app/resource/tga_loader.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -37,7 +38,13 @@ ImageCache::CachedImage& ImageCache::load_or_get(const std::string& name) {
             path = fs::path(game_dir_) / name;
         }
 
-        auto decoded = app::ImgLoader::load(path);
+        core::DecodedImage decoded;
+        std::string ext = path.extension().string();
+        if (ext == ".TGA" || ext == ".tga") {
+            decoded = app::TgaLoader::load(path);
+        } else {
+            decoded = app::ImgLoader::load(path);
+        }
         auto rgba = app::ImgLoader::to_rgba(decoded);
 
         img.width = decoded.width;

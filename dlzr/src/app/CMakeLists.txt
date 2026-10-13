@@ -4,6 +4,7 @@
 add_library(dlzr_app STATIC
     resource/dat_loader.cpp
     resource/img_loader.cpp
+    resource/tga_loader.cpp
     resource/anm_loader.cpp
     resource/flm_loader.cpp
     resource/flc_loader.cpp

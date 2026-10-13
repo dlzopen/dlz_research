@@ -2,6 +2,7 @@
 // Landmine War 1:1 Remake
 
 #include "platform/platform.hpp"
+#include "platform/crash_handler.hpp"
 #include "core/data_model/constants.hpp"
 #include "app/resource/dat_loader.hpp"
 #include "app/resource/save_loader.hpp"
@@ -122,6 +123,8 @@ std::string get_speaker_name(int32_t speaker_id, const dlzr::core::GameData& gd)
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    dlzr::platform::install_crash_handler();
+
     fs::path game_data_dir = ".";
     std::string mod_dir;
     for (int i = 1; i < argc; ++i) {

@@ -20,11 +20,11 @@ public:
                                int32_t& selected_option);
 
 private:
-    static constexpr int32_t MENU_X = 240;
-    static constexpr int32_t MENU_Y = 300;
-    static constexpr int32_t MENU_SPACING = 40;
+    static constexpr int32_t MENU_X = 320;
+    static constexpr int32_t MENU_Y = 520;
+    static constexpr int32_t MENU_SPACING = 25;
     static constexpr int32_t MENU_WIDTH = 160;
-    static constexpr int32_t MENU_HEIGHT = 30;
+    static constexpr int32_t MENU_HEIGHT = 25;
 };
 
 }  // namespace dlzr::presentation

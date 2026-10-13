@@ -4,12 +4,17 @@
 
 set(PLATFORM_SOURCES
     sdl3/sdl3_platform.cpp
+    crash_handler.cpp
 )
 
 set(PLATFORM_LINK_LIBS
     dlzr_core
     SDL3::SDL3
 )
+
+if(WIN32)
+    list(APPEND PLATFORM_LINK_LIBS dbghelp)
+endif()
 
 # SDL3_mixer temporarily disabled due to version mismatch
 # if(TARGET SDL3_mixer::SDL3_mixer)
