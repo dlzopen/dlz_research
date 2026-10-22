@@ -104,6 +104,11 @@ struct DialogueState {
     int32_t current_index{0};
     int32_t visible_chars{0};
     bool active{false};
+    // 对话弹出时刻（毫秒）。用于屏蔽"刚弹出就被上一次点击立即推掉"。
+    // 起因：19 屏开场幻灯片靠连点跳过，幻灯片结束的同帧/次帧弹出战前对话，
+    //   残留的一次 MouseDown 会被当作 ADVANCE/DISMISS，单次点击即整段推完且立即关闭，
+    //   观感等同于"进入关卡对话没有触发"。仅屏蔽极短窗口，稳态操作不受影响。
+    uint32_t started_ms{0};
     dlzr::logic::GameMode return_mode{dlzr::logic::GameMode::STRATEGIC_MAP};
 };
 
@@ -469,6 +474,8 @@ int main(int argc, char* argv[]) {
         if (!lines.empty()) {
             start_dialogue(dialogue_state, std::move(lines),
                            dlzr::logic::GameMode::BATTLE);
+            // 记录弹出时刻，用于屏蔽跳过幻灯片时的残留点击（见 DialogueState::started_ms）。
+            dialogue_state.started_ms = platform->ticks_ms();
         }
     };
 
@@ -559,6 +566,12 @@ int main(int argc, char* argv[]) {
 
             // Dialogue takes priority when active
             if (dialogue_state.active) {
+                // 弹出后 150ms 内忽略输入：防止"跳过 19 屏开场幻灯片"的残留点击
+                // 在对话弹出的次帧被当作推进/关闭，导致战前对话一闪即灭
+                // （观感=进入关卡没有对话）。稳态操作不受影响。
+                if (platform->ticks_ms() - dialogue_state.started_ms < 150) {
+                    continue;
+                }
                 auto da = dialogue_input.process_event(event);
                 if (da == dlzr::presentation::DialogueAction::ADVANCE) {
                     advance_dialogue(dialogue_state, gsm.game_data().protagonist_name);

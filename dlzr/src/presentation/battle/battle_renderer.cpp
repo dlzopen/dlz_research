@@ -93,21 +93,11 @@ void BattleRenderer::render(const logic::BattleState& state,
         draw_info_panel(state, panel_idx);
     }
 
-    // idle 帧翻转：原版 SetTimer(0x37=55ms) 每 55ms 翻转一次（证据 FUN_004249a2.c）。
-    // 用真实时间累积，绝不止每帧翻转（那会变成 ~60fps 闪烁，即"人物闪烁"故障）。
-    auto now = std::chrono::steady_clock::now();
-    if (last_frame_time_.time_since_epoch().count() != 0) {
-        int64_t dt = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - last_frame_time_).count();
-        if (dt < 0) dt = 0;
-        frame_acc_ms_ += dt;
-        // 0x37 = 55（证据 FUN_004249a2.c: SetTimer(...,0x37,...)）。
-        while (frame_acc_ms_ >= 55) {
-            frame_acc_ms_ -= 55;
-            idle_frame_ ^= 1;
-        }
-    }
-    last_frame_time_ = now;
+    // idle 帧翻转逻辑已移除（原 SE 依据有误）。
+    // 证据 FUN_004170aa.c:66：idle 单位显示的是"朝向 % 2"决定的固定帧，
+    //   不存在 55ms 周期翻转；此前对 FUN_004249a2.c 的 SetTimer(0x37) 解读
+    //   误用于 idle，造成全员高频切帧闪烁。SetTimer 实际驱动的是移动/攻击
+    //   动画计数（move/attack 分支），与静止单位无关。
 }
 
 void BattleRenderer::draw_map(const logic::BattleState& state) {
@@ -309,7 +299,12 @@ void BattleRenderer::draw_fighters(const logic::BattleState& state) {
             fighter.class_type < core::MAX_CLASS_TYPES) {
             entry = game_data_->class_types[fighter.class_type].img_index;
         }
-        int32_t frame = idle_frame_;   // idle 帧 0/1，按 55ms 时间基准翻转（证据 FUN_004249a2.c）
+        // idle 精灵帧 = 朝向 % 2（稳态，不随时翻转）。
+        // 证据 FUN_004170aa.c:66：idle 分支 local_908 = *(uint*)(&DAT_0096abb8 + unit*0x40) % 2；
+        //   同一字段在 move/attack 分支被当作 dir（%4），故该字段即单位朝向。
+        //   ⇒ 原版 idle 单位显示的是由其朝向决定的固定帧，并非每 55ms 切换的动画。
+        //   此前按 55ms 时间累积翻转 idle_frame_，导致"所有角色高频切帧闪烁"。
+        int32_t frame = ((fighter.direction % 2) + 2) % 2;   // 归一化到 0/1
         platform::TextureHandle tex = (entry >= 0 && entry < app::ArmyLoader::ENTRY_COUNT)
                                           ? get_army_texture(entry, frame) : 0;
         if (tex) {
@@ -484,7 +479,8 @@ void BattleRenderer::draw_info_panel(const logic::BattleState& state,
     }
     font_->draw_text(464, 160, "\xB9\xA5\xBB\xF7", TR, TG, TB);   // 攻击
     draw_int(512, 160, atk, TR, TG, TB);
-    font_->draw_text(548, 160, "\xB7\xC0\xD3\xA6", TR, TG, TB);   // 防御
+    // 防御：GBK = 防 B7 C0 + 御 D3 F9。此前沿用 D3 A6（碍），面板误显"防碍"。
+    font_->draw_text(548, 160, "\xB7\xC0\xD3\xF9", TR, TG, TB);   // 防御
     draw_int(592, 160, def, TR, TG, TB);
 
     // 体力 cur/max。证据 FUN_0041be02.c:91-95 @ (464,180)。
@@ -494,7 +490,8 @@ void BattleRenderer::draw_info_panel(const logic::BattleState& state,
     draw_int(560, 180, f.stats.max_hp, TR, TG, TB);
 
     // 士气 cur/100。证据 FUN_0041be02.c:115-118 @ (464,200)。
-    font_->draw_text(464, 200, "\xCA\xB0\xC6\xF8", TR, TG, TB);  // 士气
+    // 士气：GBK = 士 CA BF + 气 C6 F8。此前沿用 CA B0（拾），面板误显"拾气"。
+    font_->draw_text(464, 200, "\xCA\xBF\xC6\xF8", TR, TG, TB);  // 士气
     draw_int(512, 200, f.stats.morale, TR, TG, TB);
     font_->draw_text(544, 200, "/", TR, TG, TB);
     draw_int(560, 200, 100, TR, TG, TB);

@@ -234,7 +234,13 @@ void BattleEngine::init_fighters() {
         rt.team = 0;                                  // 我方
         rt.grid_x = fight_->intro.grid_param_x;      // 9
         rt.grid_y = fight_->intro.grid_param_y;      // 25
-        rt.direction = 1;
+        // 朝向由槽位数据决定（用户明示 + FIGHT.DAT 实测）。
+        // 证据：FightFighter.direction @+0x28（facing @+0x1C 的冗余拷贝），
+        //   实测 fight0 fighters[0].direction=0(北)、fighters[40]/[41]=1(南)。
+        //   此前硬编码 direction=1(南)，导致主角朝南；槽位 0 数据就是北。
+        //   idle 精灵帧亦由朝向决定（FUN_004170aa.c:66 → frame = direction%2），
+        //   故朝向同时影响贴图，必须取数据值。
+        rt.direction = fight_->fighters[hero_slot].direction;
         rt.is_active = true;
         rt.has_acted = false;
         rt.stamina = 100;
