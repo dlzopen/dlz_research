@@ -154,6 +154,10 @@ TEST_F(BattleSettlementTest, InitFighters_NoOutOfBoundsCrash) {
     // 另：引擎会在敌人之上部署 Tier-B 起始军团（玩家），故按 team 分别计数。
     for (int i = 0; i < 12; ++i) {
         fight_.fighters[i].stage = 1;
+        // 部署判据是 grid_x（@+0x14），不是 pos_x（@+0x20）。
+        // 证据 FUN_0041b53c.c:20 —— 见 battle_engine.cpp 部署判据注释。
+        fight_.fighters[i].grid_x = 5;
+        fight_.fighters[i].grid_y = 5;
         fight_.fighters[i].pos_x = 5;
         fight_.fighters[i].pos_y = 5;
         fight_.fighters[i].stamina = 100;
@@ -163,7 +167,9 @@ TEST_F(BattleSettlementTest, InitFighters_NoOutOfBoundsCrash) {
     }
     for (int i = 12; i < 128; ++i) {
         fight_.fighters[i].stage = 0;
-        fight_.fighters[i].pos_x = 999;  // 真实"未部署"标记
+        fight_.fighters[i].grid_x = 999;  // 真实"未部署"标记（判据字段）
+        fight_.fighters[i].grid_y = 999;
+        fight_.fighters[i].pos_x = 999;
         fight_.fighters[i].pos_y = 999;
     }
     // 真实 FIGHT.DAT 中登场单位对应的名册条目必须标记阵营=敌方(1)，
@@ -193,6 +199,9 @@ TEST_F(BattleSettlementTest, InitFighters_All128SlotsNoCrash) {
     // 引擎必须跳过 88..127 而不越界，且不会把 88..127 当成敌人。
     for (int i = 0; i < 128; ++i) {
         fight_.fighters[i].stage = 1;
+        // 同样以 grid_x 为判据（i%13 恒 != 999，故 128 位全部登场）
+        fight_.fighters[i].grid_x = (i % 13);
+        fight_.fighters[i].grid_y = (i % 7);
         fight_.fighters[i].pos_x = (i % 13);
         fight_.fighters[i].pos_y = (i % 7);
         fight_.fighters[i].stamina = 100;

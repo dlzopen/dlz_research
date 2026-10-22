@@ -151,13 +151,25 @@ struct GameData {
 // ============================================================
 // 战斗场景数据（从 FIGHT.DAT 单关加载）
 // Battle scene data (loaded per-fight from FIGHT.DAT)
-// 每关 20508 字节 = Intro(700) + Fighter[128](8192) + People[88](11616)
+// 磁盘记录 20508 字节 = Intro(700) + Fighter[128](8192) + People[88](11616)
+// ⚠️ 但**运行时** people 数组是 128 条，不是 88 条 —— 这是此前"敌人全是孙悟空"
+//    的根因：把磁盘 88 条当成 people[0..87]，于是槽位40 取到 people[40]=孙悟空。
 // ============================================================
 struct FightData {
     FightIntro intro;
     std::array<FightFighter, 128> fighters;
-    std::array<FightPeople, 88> people;
+
+    // 运行时布局 128 条 × 132B = 16896B。
+    // 证据（三重一致）：
+    //   · FUN_00427c94.c:36 / FUN_0041b53c.c:27：整体搬运 people 数组 0x4200=
+    //     16896B = 0x80(128) × 0x84(132)（存档读写亦按 128 条）。
+    //   · FUN_004292fe.c:18：FIGHT.DAT 装载把磁盘 88 条写到
+    //     DAT_007d2398 = people 基址(0x7d0ef8) + 0x14A0 = +40×0x84
+    //     ⇒ 运行时 people[40+k] = 磁盘 people[k]。
+    // 故 [0..39] = 战役槽（主角 = people[0]），[40..127] = 本关名册。
+    std::array<FightPeople, 128> people;
 };
-static_assert(sizeof(FightData) == 20508, "FightData must be 20508 bytes");
+static_assert(sizeof(FightData) == 700 + 128 * 64 + 128 * 132,
+              "FightData 运行时布局: Intro(700) + Fighter[128](8192) + People[128](16896)");
 
 }  // namespace dlzr::core

@@ -471,11 +471,29 @@ int main(int argc, char* argv[]) {
                 lines.push_back(dialogue_mgr.get_dialogue_text(idx));
             }
         }
+        // 可观测性：此前"战前对话到底有没有触发"无法证伪（代码里还并存着
+        // "第0关没有战前对话"的矛盾注释），只能靠猜/靠改外围参数碰运气。
+        // 这里把事件表与取文结果打到 stderr，实机一眼可判定是哪个环节空了。
+        std::fprintf(stderr,
+                     "[DIALOGUE] fight=%d pre-battle: entries=%zu lines=%zu "
+                     "dialogue_count=%d\n",
+                     loaded_fight_index, events.dialogue_entries.size(),
+                     lines.size(), dialogue_mgr.dialogue_count());
+        if (lines.empty() && !events.dialogue_entries.empty()) {
+            std::fprintf(stderr,
+                         "[DIALOGUE][WARN] 事件表有条目却取不到文本 —— "
+                         "索引越界或 TXT.DAT 未装载\n");
+        }
         if (!lines.empty()) {
             start_dialogue(dialogue_state, std::move(lines),
                            dlzr::logic::GameMode::BATTLE);
             // 记录弹出时刻，用于屏蔽跳过幻灯片时的残留点击（见 DialogueState::started_ms）。
             dialogue_state.started_ms = platform->ticks_ms();
+            std::fprintf(stderr, "[DIALOGUE] shown: %zu line(s), first=%.40s\n",
+                         dialogue_state.parsed.size(),
+                         dialogue_state.parsed.empty()
+                             ? ""
+                             : dialogue_state.parsed[0].text.c_str());
         }
     };
 
@@ -566,10 +584,11 @@ int main(int argc, char* argv[]) {
 
             // Dialogue takes priority when active
             if (dialogue_state.active) {
-                // 弹出后 150ms 内忽略输入：防止"跳过 19 屏开场幻灯片"的残留点击
-                // 在对话弹出的次帧被当作推进/关闭，导致战前对话一闪即灭
-                // （观感=进入关卡没有对话）。稳态操作不受影响。
-                if (platform->ticks_ms() - dialogue_state.started_ms < 150) {
+                // 弹出后 400ms 内忽略输入：防止"跳过 19 屏开场幻灯片"的连点/长按
+                // 余波在对话弹出的次帧被当作推进或关闭，导致战前对话一闪即灭
+                // （观感=进入关卡没有对话）。400ms 远小于一次有意识操作的间隔，
+                // 稳态下不影响正常推进。
+                if (platform->ticks_ms() - dialogue_state.started_ms < 400) {
                     continue;
                 }
                 auto da = dialogue_input.process_event(event);
@@ -1155,11 +1174,14 @@ int main(int argc, char* argv[]) {
                 break;
             }
 
-            // 自创的 BATTLE_INTRO"战斗简报/战前对话"分支已删除。
-            // RE 证据: FUN_0042e2d6.c:244-299(确定分支) → FUN_0042e0f1(幻灯片)
-            // → FUN_0041b8e9(进战斗) → FUN_004294be(部署) → FUN_0040be07(第0关回调,
-            // 仅网格/实体放置,无对话)。原版确定→幻灯片→战斗地图上直接可操作，
-            // 中间没有简报屏，也没有战前对话（第 0 关）。
+            // ⚠️ 此处曾并存一条已被证伪的注释："…也没有战前对话（第 0 关）"。
+            //   它导致"第0关到底有没有战前对话"长期自相矛盾，实现时反复被删掉。
+            //   **已裁决（以数据 + 装载器为准）**：第 0 关有战前对话，
+            //   由 LevelEventManager::get_pre_battle_events(0) → {21} → TXT[21]
+            //   "01大队长，赵村离这儿不远，大半个时辰就到了。"（说话人码 01）。
+            //   该对话**叠加在战斗地图上**弹出（FUN_0043d82f 对话框覆盖层），
+            //   不是独立简报屏 —— 故"没有简报屏"是对的，"没有战前对话"是错的。
+            //   自创的独立 BATTLE_INTRO 屏幕确已删除（原版无此屏）。
 
             case dlzr::logic::GameMode::BATTLE: {
                 audio.play_bgm(3);  // Battle music

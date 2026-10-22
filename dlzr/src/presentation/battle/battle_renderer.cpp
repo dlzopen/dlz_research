@@ -293,6 +293,25 @@ void BattleRenderer::draw_fighters(const logic::BattleState& state) {
         int32_t x, y;
         if (!world_to_screen(fighter.grid_x, fighter.grid_y, x, y)) continue;
 
+        // 一格只画一个单位（下标最小者胜出）。
+        // 证据 FUN_004170aa.c:51-70：精灵是按**格子**取的——
+        //   uVar4 = (&DAT_0057bf10)[cell*2]（该格的单位 id），再据此取
+        //   DAT_007db4f8[uVar4] 精灵。占格表里一格只存一个单位 id。
+        // 实测 fight0 槽位 45(碉堡)/98(吕正操)/99(黄敬) 坐标同为 (0,0)，
+        //   原版只画一个（截图左上角正是碉堡），这解释了"吕正操没有登场"。
+        //   此前克隆对所有单位逐个绘制，会把三者叠在一起。
+        bool duplicate_cell = false;
+        for (int j = 0; j < i; ++j) {
+            const auto& prev = state.fighters[j];
+            if (!prev.is_active || prev.stats.current_hp <= 0) continue;
+            if (prev.grid_x == fighter.grid_x && prev.grid_y == fighter.grid_y) {
+                // 用 goto/标志位代替 continue（本处在内层 for 中）
+                duplicate_cell = true;
+                break;
+            }
+        }
+        if (duplicate_cell) continue;
+
         // 单位精灵 = ARMY.DAT[ class_types[class_type].img_index ]。
         int32_t entry = 0;
         if (game_data_ && fighter.class_type >= 0 &&
@@ -376,7 +395,7 @@ void BattleRenderer::draw_info_panel(const logic::BattleState& state,
 
     // 头像 80×100 @ (464,38)。证据 FUN_0041be02.c:73。
     int32_t face_idx = -1;
-    if (fight_data_ && f.people_idx >= 0 && f.people_idx < 88) {
+    if (fight_data_ && f.people_idx >= 0 && f.people_idx < 128) {
         face_idx = fight_data_->people[f.people_idx].face;
     }
     platform::TextureHandle ftex = get_face_texture(face_idx);
@@ -412,7 +431,7 @@ void BattleRenderer::draw_info_panel(const logic::BattleState& state,
     draw_int(592, 118, f.level, TR, TG, TB);
     font_->draw_text(548, 138, "\xBE\xAD\xD1\xE9", TR, TG, TB);  // 经验
     int32_t exp_val = 0;
-    if (fight_data_ && f.people_idx >= 0 && f.people_idx < 88) {
+    if (fight_data_ && f.people_idx >= 0 && f.people_idx < 128) {
         exp_val = fight_data_->people[f.people_idx].experience;
     }
     draw_int(592, 138, exp_val, TR, TG, TB);
@@ -518,7 +537,7 @@ void BattleRenderer::draw_int(int32_t x, int32_t y, int32_t value,
 const char* BattleRenderer::get_fighter_name(const logic::RuntimeFighter& fighter) const {
     if (!fight_data_) return "";
     int32_t pidx = fighter.people_idx;
-    if (pidx >= 0 && pidx < 88) {
+    if (pidx >= 0 && pidx < 128) {
         return fight_data_->people[pidx].name.data();
     }
     return "";
@@ -527,7 +546,7 @@ const char* BattleRenderer::get_fighter_name(const logic::RuntimeFighter& fighte
 const char* BattleRenderer::get_class_name(const logic::RuntimeFighter& fighter) const {
     if (!fight_data_ || !game_data_) return "";
     int32_t pidx = fighter.people_idx;
-    if (pidx >= 0 && pidx < 88) {
+    if (pidx >= 0 && pidx < 128) {
         int32_t class_idx = fight_data_->people[pidx].class_type;
         if (class_idx >= 0 && class_idx < core::MAX_CLASS_TYPES) {
             return game_data_->class_types[class_idx].name.data();

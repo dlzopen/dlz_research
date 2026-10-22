@@ -235,9 +235,21 @@ void BattleEngine::init_fighters() {
     //   ※ 主角占"敌方循环结束后第一个空闲战斗位"，避免覆盖已部署的敌方单位
     //     （fight0 下即战斗位 0，因 fighters[0] 为 stage=0 预备）。
     {
-        int32_t hero_slot = 0;
+        // 主角占"数据上未被占用的槽位"（grid_x == 999 = 未部署）。
+        // 不能只看 is_active：当 128 个槽位全部登场时，回退到槽位 0 会
+        // **覆盖一个真实敌方单位**（回归测试 BattleSettlementTest 因此少了 1 个敌人）。
+        // 若确实无空闲槽位，则本次不部署主角（宁缺勿覆盖）。
+        int32_t hero_slot = -1;
         for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
-            if (!state_.fighters[i].is_active) { hero_slot = i; break; }
+            if (fight_->fighters[i].grid_x == 999) { hero_slot = i; break; }
+        }
+        // 无空闲槽位时跳过主角部署（不覆盖任何真实单位），也不虚增计数。
+        if (hero_slot < 0) {
+            std::fprintf(stderr,
+                         "[BATTLE][WARN] 无空闲战斗位（无 grid_x==999 的槽位），"
+                         "本次未部署主角\n");
+            state_.max_rounds = 50;
+            return;
         }
         auto& rt = state_.fighters[hero_slot];
         rt.people_idx = 0;                            // 指向被覆盖为大队长的 fight.people[0]

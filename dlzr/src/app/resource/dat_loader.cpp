@@ -141,7 +141,10 @@ core::FightData DatLoader::load_fight(int32_t fight_index) const {
     }
 
     BinaryReader reader(resolve("FIGHT.DAT"));
-    core::FightData fd;
+    // 值初始化：people[0..39]（战役槽，含主角 people[0]）先清零，
+    // 由 battle_engine::init() 用角色选择结果填充 people[0]；
+    // people[40..127] 由下方磁盘名册覆盖。避免读到未初始化内存。
+    core::FightData fd{};
 
     size_t base = static_cast<size_t>(fight_index) * core::FIGHT_RECORD_SIZE;
 
@@ -157,11 +160,28 @@ core::FightData DatLoader::load_fight(int32_t fight_index) const {
     }
 
     // People[88]: 88 × 132 = 11616 bytes, offset 700 + 8192 = 8892
+    //
+    // ★ 关键映射（此前搞错，导致第0关敌人全是"孙悟空"）：
+    //   磁盘的 88 条名册**不是** people[0..87]，而是装载到运行时 people 的
+    //   **[40..127]** —— 即 people[40+k] = 磁盘[k]。
+    //   证据 FUN_004292fe.c:15-18（FIGHT.DAT 装载器）：
+    //     FUN_0043e6a0(file, fight_index * 0x501c, 0);      // 0x501c=20508
+    //     FUN_0043e510(&DAT_007d01c8, 700, 1,   file);      // intro
+    //     FUN_0043e510(&DAT_0096ab90, 0x40, 0x80, file);    // fighters 128×64
+    //     FUN_0043e510(&DAT_007d2398, 0x84, 0x58, file);    // ★ people 88×132
+    //   其中 DAT_007d2398 − people基址(0x7d0ef8) = 0x14A0 = 40 × 0x84(132)。
+    //   旁证 FUN_004292fe.c:20-23：装载后立刻为 0x28(=40)..0x7f 加载头像
+    //   （&DAT_007d0f08 + i*0x84，即 people[i].face），区间起点正是 40。
+    //   实测 fight0：people[40]=伪军(face78/str70/步枪队)、[45]=碉堡，
+    //   与原版截图面板"伪军 武力70 智力60 步枪队 等级2"逐项吻合。
     constexpr size_t kPeopleOffset = 700 + 8192;
+    constexpr int kRuntimePeopleBase = 40;   // 磁盘名册在运行时数组中的起始下标
     for (int i = 0; i < 88; ++i) {
         size_t off = base + kPeopleOffset
                    + static_cast<size_t>(i) * sizeof(core::FightPeople);
-        reader.read_bytes(off, &fd.people[i], sizeof(core::FightPeople));
+        int dst = kRuntimePeopleBase + i;
+        if (dst >= static_cast<int>(fd.people.size())) break;
+        reader.read_bytes(off, &fd.people[dst], sizeof(core::FightPeople));
     }
 
     return fd;
