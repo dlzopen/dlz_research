@@ -163,12 +163,22 @@ void BattleEngine::init_fighters() {
     else if (difficulty_level_ == 2) diff_pct = 130;
 
     // --- 敌方 / 原战斗名册单位（来自 FIGHT.DAT.fighters + fight.people）---
+    // 【部署判据】只看 grid_x != 999，不看 stage。
+    // 证据 FUN_0041b53c.c:19-23：
+    //   for (local_8 = 0; local_8 < 0x80; local_8++)
+    //     if ((&DAT_0096aba4)[local_8 * 0x10] != 999)
+    //       FUN_0041b470(*(int*)(DAT_0096cba8 + (&DAT_007d0f24)[local_8*0x21] * 0xa0), local_8);
+    //   · (&DAT_0096aba4)[unit*0x10] 为 int 下标 → 字节步长 = 0x10*4 = 64 = sizeof(FightFighter)，
+    //     999 是 grid_x 哨兵（types.hpp: FightFighter.grid_x "999=未部署"），
+    //     ⇒ 整句等价于 fighters[unit].grid_x != 999。
+    //   · (&DAT_007d0f24)[unit*0x21] 同样为 int 下标 → 步长 0x21*4 = 132 = sizeof(FightPeople)，
+    //     且该符号落在记录内 +0x2C ⇒ 读到的正是 FightPeople.class_type。
+    //   · 循环内**完全没有 stage 判定**。
+    // 此前额外要求 stage==1 属臆造条件，误丢 fight0 槽位 42/43/44
+    //   （真实坐标 (18,8)/(17,8)/(18,9)、朝向 2=西、behavior=1 巡逻）。
     for (int i = 0; i < 128; ++i) {
         const auto& src = fight_->fighters[i];
-        // 999 = 未部署（预备/reserve）。证据: FightFighter.grid_x 注释 "999=未部署"；
-        // 原版 reserve 单位待开场事件脚本(FUN_0043dd47)按剧情"按需上场"，此处不强制部署
-        // （用户确认 999 是对的、之后根据需要）。只让 stage==1 且 grid_x!=999 的单位登场。
-        if (src.stage != 1 || src.grid_x == 999) {
+        if (src.grid_x == 999) {
             continue;
         }
         // FIGHT.DAT 每关只有 88 名角色名册 (People[88])，而战斗部署位有 128 个。
@@ -181,7 +191,7 @@ void BattleEngine::init_fighters() {
         rt.grid_x = src.grid_x;
         rt.grid_y = src.grid_y;
         rt.direction = src.direction;
-        rt.is_active = (src.stage != 0);
+        rt.is_active = true;   // grid_x != 999 即登场（见上方部署判据证据）
         rt.stamina = src.stamina;
         rt.movement = src.movement;
         rt.people_idx = i;
