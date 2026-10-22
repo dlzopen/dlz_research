@@ -4,9 +4,17 @@
 #include "platform/platform.hpp"
 #include "platform/crash_handler.hpp"
 #include "core/data_model/constants.hpp"
+#include "core/data_model/types.hpp"
+
+#include "heartbeat.hpp"
+
+#include <algorithm>
+#include <string>
+#include <thread>
 #include "app/resource/dat_loader.hpp"
 #include "app/resource/save_loader.hpp"
 #include "app/resource/face_loader.hpp"
+#include "app/resource/army_loader.hpp"
 #include "app/resource/flm_loader.hpp"
 #include "logic/game_state_manager.hpp"
 #include "logic/battle/battle_engine.hpp"
@@ -23,7 +31,11 @@
 #include "presentation/dialogue/dialogue_input.hpp"
 #include "presentation/battle/battle_renderer.hpp"
 #include "presentation/battle/battle_input_handler.hpp"
-#include "presentation/battle/battle_intro_renderer.hpp"
+// #include "presentation/battle/battle_intro_renderer.hpp"
+// ↑ 自创的"战斗简报屏"已删除。RE 证据（2026-10-23 复核）：
+//   原版确定链路 FUN_0042e2d6(确定)→FUN_0042e0f1(幻灯片)→FUN_0041b8e9(进战斗)
+//   →FUN_004294be(部署)→PTR_FUN_004465d0[0]=FUN_0040be07(网格/实体放置)
+//   全链路**没有任何独立简报屏**；第 0 关回调不弹对话。
 #include "presentation/battle/battle_result_renderer.hpp"
 #include "presentation/battle/battle_animation_overlay.hpp"
 #include "presentation/battle/battle_animation_controller.hpp"
@@ -55,6 +67,32 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+
+// Convert UTF-8 string to GBK encoding
+static std::string utf8_to_gbk(const std::string& utf8_str) {
+    if (utf8_str.empty()) return "";
+    
+    // UTF-8 -> UTF-16 (wide char)
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return utf8_str;
+    
+    std::wstring wstr(wlen - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, &wstr[0], wlen);
+    
+    // UTF-16 -> GBK
+    int gbk_len = WideCharToMultiByte(936, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (gbk_len <= 0) return utf8_str;
+    
+    std::string gbk_str(gbk_len - 1, '\0');
+    WideCharToMultiByte(936, 0, wstr.c_str(), -1, &gbk_str[0], gbk_len, nullptr, nullptr);
+    
+    return gbk_str;
+}
+#endif
 
 namespace fs = std::filesystem;
 
@@ -92,21 +130,29 @@ void start_dialogue(DialogueState& ds,
     ds.return_mode = return_mode;
 }
 
-void advance_dialogue(DialogueState& ds) {
+// Forward declaration (defined later in this anonymous namespace)
+std::string format_dialogue_text(const std::string& raw,
+                                  const std::string& protagonist_name);
+
+void advance_dialogue(DialogueState& ds, const std::string& protagonist_name) {
     if (!ds.active || ds.parsed.empty()) return;
 
     const auto& text = ds.parsed[ds.current_index].text;
+    // Count visible chars exactly as the renderer shows them:
+    //  - AA/BB/CC/DD marker pairs are stripped (0 visible chars)
+    //  - GG -> protagonist name, TT -> stripped
+    std::string display = format_dialogue_text(text, protagonist_name);
     int32_t total_chars = 0;
     size_t pos = 0;
-    while (pos < text.size()) {
-        uint8_t b = static_cast<uint8_t>(text[pos]);
+    while (pos < display.size()) {
+        uint8_t b = static_cast<uint8_t>(display[pos]);
         pos += (b < 0x80) ? 1 : 2;
         total_chars++;
     }
 
     if (ds.visible_chars < total_chars) {
-        ds.visible_chars += 2;
-        if (ds.visible_chars > total_chars) ds.visible_chars = total_chars;
+        // 整页显示（原版 FUN_0043d82f 一次渲染整段，无逐字）：首次推进即全显。
+        ds.visible_chars = total_chars;
     } else {
         ds.current_index++;
         ds.visible_chars = 0;
@@ -122,10 +168,155 @@ std::string get_speaker_name(int32_t speaker_id, const dlzr::core::GameData& gd)
     return std::string(name.data(), strnlen(name.data(), name.size()));
 }
 
+// Substitute the dialogue tokens that the original renderer does NOT colour:
+//   GG = protagonist reference (大队长 / player hero) -> use the player's name
+//   TT = battle/place token -> stripped by the original (no colour marker)
+// AA/BB/CC/DD markers are left intact for the renderer to colour per token.
+std::string format_dialogue_text(const std::string& raw,
+                                  const std::string& protagonist_name) {
+    std::string out = raw;
+    if (!protagonist_name.empty()) {
+        size_t pos = 0;
+        while ((pos = out.find("GG", pos)) != std::string::npos) {
+            out.replace(pos, 2, protagonist_name);
+            pos += protagonist_name.size();
+        }
+    }
+    size_t tpos = 0;
+    while ((tpos = out.find("TT", tpos)) != std::string::npos) {
+        out.replace(tpos, 2, "");
+    }
+    return out;
+}
+
 }  // namespace
+
+// === 卡死诊断心跳（dlzr_heartbeat.log）===
+// 卡死是无栈可取的挂起（多为堆损坏自旋 / SDL present 阻塞）。
+// 细粒度子步骤标记 + 看门狗线程见 heartbeat.cpp。
+static uint64_t g_frame_count = 0;
+
+static const char* mode_name(dlzr::logic::GameMode m) {
+    using GM = dlzr::logic::GameMode;
+    switch (m) {
+        case GM::TITLE: return "TITLE";
+        case GM::CHARACTER_SELECT: return "CHARACTER_SELECT";
+        case GM::BATTLE: return "BATTLE";
+        case GM::CUTSCENE: return "CUTSCENE";
+        case GM::LEVEL_SELECT: return "LEVEL_SELECT";
+        case GM::STRATEGIC_MAP: return "STRATEGIC_MAP";
+        case GM::TOWN: return "TOWN";
+        case GM::SAVE_LOAD: return "SAVE_LOAD";
+        case GM::PROMOTION: return "PROMOTION";
+        case GM::EQUIPMENT: return "EQUIPMENT";
+        case GM::FORGING: return "FORGING";
+        case GM::ENDING: return "ENDING";
+        case GM::HIDDEN_LEVEL_CHOICE: return "HIDDEN_LEVEL_CHOICE";
+        default: return "UNKNOWN";
+    }
+}
+
+// Modal dialog helper function
+// Returns: 0 = first option, 1 = second option, -1 = cancel
+static int32_t show_modal_dialog(dlzr::platform::Platform& platform,
+                                  dlzr::presentation::FontRenderer& font,
+                                  dlzr::presentation::ImageCache& images,
+                                  const char* prompt,
+                                  const char* option1,
+                                  const char* option2) {
+    // Dialog position and size
+    // MENU03.IMG is 128x88, draw it centered
+    constexpr int32_t DLG_X = 320;
+    constexpr int32_t DLG_Y = 200;
+    constexpr int32_t DLG_W = 320;
+    constexpr int32_t DLG_H = 160;
+    constexpr int32_t BG_W = 128;  // MENU03.IMG width
+    constexpr int32_t BG_H = 88;   // MENU03.IMG height
+    constexpr int32_t BG_X = DLG_X + (DLG_W - BG_W) / 2;  // Center background
+    constexpr int32_t BG_Y = DLG_Y + (DLG_H - BG_H) / 2;
+    
+    // Main dialog loop
+    int32_t hovered_option = -1;  // -1 = none, 0 = option1, 1 = option2
+    
+    while (true) {
+        dlzr::platform::Event event;
+        while (platform.poll_event(event)) {
+            if (event.type == dlzr::platform::Event::Type::MouseMove) {
+                int32_t mx = event.mouse_x;
+                int32_t my = event.mouse_y;
+                
+                // Check which option is hovered
+                // Original: option = ((mouse_y - dialog_y) - 32) / 24
+                // Option 0: y in [BG_Y+32, BG_Y+56)
+                // Option 1: y in [BG_Y+56, BG_Y+80)
+                int32_t new_hovered = -1;
+                if (mx >= BG_X && mx <= BG_X + BG_W) {
+                    if (my >= BG_Y + 32 && my < BG_Y + 56) {
+                        new_hovered = 0;  // 是
+                    } else if (my >= BG_Y + 56 && my < BG_Y + 80) {
+                        new_hovered = 1;  // 否
+                    }
+                }
+                
+                if (new_hovered != hovered_option) {
+                    hovered_option = new_hovered;
+                }
+            } else if (event.type == dlzr::platform::Event::Type::MouseDown) {
+                int32_t mx = event.mouse_x;
+                int32_t my = event.mouse_y;
+                
+                // Check if clicked in dialog area
+                if (mx >= BG_X && mx <= BG_X + BG_W &&
+                    my >= BG_Y && my <= BG_Y + BG_H) {
+                    if (my >= BG_Y + 32 && my < BG_Y + 56) {
+                        return 0;  // option1
+                    } else if (my >= BG_Y + 56 && my < BG_Y + 80) {
+                        return 1;  // option2
+                    }
+                }
+            }
+        }
+        
+        // Render dialog background (MENU03.IMG at original 128x88 size, centered)
+        images.draw_image("MENU03.IMG", BG_X, BG_Y);
+        
+        // Draw text ON TOP of the background image (inside the dialog panels)
+        // Original positions from reverse engineering:
+        // Prompt: centered at y=4
+        // Option 1: (0x38, 0x24) = (56, 36)
+        // Option 2: (0x38, 0x3c) = (56, 60)
+        
+        // Prompt text centered in top area
+        font.draw_text(BG_X + 40, BG_Y + 4, prompt, 100, 200, 255);  // Cyan
+        
+        // Option1  - cyan default, orange when hovered
+        if (hovered_option == 0) {
+            font.draw_text(BG_X + 56, BG_Y + 36, option1, 255, 165, 0);  // Orange when hovered
+        } else {
+            font.draw_text(BG_X + 56, BG_Y + 36, option1, 100, 200, 255);  // Cyan normal
+        }
+        
+        // Option2 - cyan default, orange when hovered
+        if (hovered_option == 1) {
+            font.draw_text(BG_X + 56, BG_Y + 60, option2, 255, 165, 0);  // Orange when hovered
+        } else {
+            font.draw_text(BG_X + 56, BG_Y + 60, option2, 100, 200, 255);  // Cyan normal
+        }
+        
+        platform.present();
+        platform.delay_ms(8);  // 避免 while(true) 模态循环 100% 占 CPU
+    }
+    
+    return -1;
+}
 
 int main(int argc, char* argv[]) {
     dlzr::platform::install_crash_handler();
+
+    dlzr::hb_init();
+    // 看门狗：主线程若 3 秒未推进帧号，落盘 "WATCHDOG STALL: mode=.. step=.."，
+    // 精确锁定卡死所在 Mode 与帧内子步骤。detach 即可（进程退出随之结束）。
+    std::thread(dlzr::hb_watchdog).detach();
 
     fs::path game_data_dir = ".";
     std::string mod_dir;
@@ -137,6 +328,12 @@ int main(int argc, char* argv[]) {
             game_data_dir = arg;
         }
     }
+
+    // 引擎自带数据文件（dialogue_groups.bin / dialogue_map.bin 等）随 exe 部署，
+    // 故以其所在目录为 engine_data_dir。
+    fs::path exe_path = fs::path(argv[0]).lexically_normal();
+    fs::path engine_data_dir = exe_path.parent_path();
+    if (engine_data_dir.empty()) engine_data_dir = ".";
 
     auto platform = dlzr::platform::create_sdl3_platform();
 
@@ -155,6 +352,9 @@ int main(int argc, char* argv[]) {
     dlzr::app::FaceLoader face_loader;
     face_loader.load((game_data_dir / "FACE.DAT").string());
 
+    dlzr::app::ArmyLoader army_loader;
+    army_loader.load((game_data_dir / "ARMY.DAT").string());
+
     dlzr::app::FlmLoader flm_loader;
     flm_loader.load((game_data_dir / "FLM.DAT").string());
 
@@ -162,7 +362,7 @@ int main(int argc, char* argv[]) {
     {
         auto texts = loader.load_dialogues();
         dialogue_mgr.load_dialogues(texts);
-        dialogue_mgr.init_dialogue_groups();
+        dialogue_mgr.init_dialogue_groups(engine_data_dir.string());
     }
 
     dlzr::logic::LevelEventManager level_events;
@@ -197,35 +397,39 @@ int main(int argc, char* argv[]) {
 
     // Title screen
     dlzr::presentation::TitleRenderer title_renderer;
-    title_renderer.init(*platform, font, images);
+    title_renderer.init(*platform, font, images, game_data_dir.string());
     dlzr::presentation::TitleInput title_input;
     int32_t title_selected = 0;
+    int32_t prev_title_selected = 0;
 
     // Character selection screen
     dlzr::presentation::CharacterSelectRenderer char_select_renderer;
-    char_select_renderer.init(*platform, font, images, face_loader);
+    char_select_renderer.init(*platform, font, images, face_loader, army_loader);
     dlzr::presentation::CharacterSelectInput char_select_input;
     int32_t char_selected_portrait = 0;
     int32_t char_selected_formation = 0;
     int32_t char_slider_value = 80;
     int32_t char_difficulty = 1;
     std::string char_player_name = "\xD6\xF7\xBD\xC7";  // 主角 (GBK)
+    int32_t char_hovered_button = -1;
+    int32_t char_pressed_button = -1;
+    bool char_slider_dragging = false;
+    bool char_naming_mode = false;
 
     // Dialogue
     dlzr::presentation::DialogueRenderer dialogue_renderer;
-    dialogue_renderer.init(*platform, font, images);
+    dialogue_renderer.init(*platform, font, images, game_data_dir.string());
     dlzr::presentation::DialogueInput dialogue_input;
     DialogueState dialogue_state;
     ChoiceState choice_state;
+    int32_t loaded_fight_index{-1};   // 当前 setup_battle 载入的关卡索引（供开场对话路由）
 
     // Battle
     dlzr::logic::BattleEngine battle_engine;
     dlzr::logic::BattleEngine::ScoreBreakdown last_score_breakdown;
     dlzr::presentation::BattleRenderer battle_renderer;
-    battle_renderer.init(*platform, font, images);
+    battle_renderer.init(*platform, font, images, army_loader, face_loader);
     dlzr::presentation::BattleInputHandler battle_input;
-    dlzr::presentation::BattleIntroRenderer battle_intro;
-    battle_intro.init(*platform, font);
     dlzr::presentation::BattleResultRenderer battle_result;
     battle_result.init(*platform, font);
     dlzr::presentation::BattleAnimationOverlay battle_anim_overlay;
@@ -233,10 +437,44 @@ int main(int argc, char* argv[]) {
     dlzr::presentation::BattleAnimationController battle_anim_controller;
     battle_anim_controller.init(40, 40, 40);
     dlzr::core::FightData fight_data;
+    dlzr::core::FightMap current_map;     // 当前战斗地图（持久，供 set_map 持有指针）
+    dlzr::core::BlkGroupData current_blk; // 当前地图瓦片组
+
+    // ------------------------------------------------------------------
+    // 战斗开场对话（证据坐标：
+    //   - 关卡回调 PTR_FUN_004465d0[0]=FUN_0040be07 → FUN_0043dd47(开场事件脚本)；
+    //   - screen/walk19/walk19.log: MAP 出现 → after dialog dismiss → after select，
+    //     即进地图后先弹对话、dismiss 后才选兵——对话叠在战斗地图上，非独立屏；
+    //   - 该链路上没有任何"战斗简报屏"（自创 BATTLE_INTRO 已删除）。
+    // 首关对话内容取 FIGHT.DAT fight_txt（fight0 实测 @0x24 = 40）。
+    // ------------------------------------------------------------------
+    bool pending_opening_dialogue = false;   // 战后对话结束后补播下一关开场对话
+    auto start_battle_opening_dialogue = [&]() {
+        // RE 证据（铁律零：用逐关逆向结论，禁止用被误识别的表推断）：
+        //   各关战前对话 = LevelEventManager::get_pre_battle_events(fight_index).dialogue_entries
+        //   （TXT.DAT 条目索引，逐关对应原版关卡回调 PTR_FUN_004465d0[i] 的开场事件脚本，
+        //    见 level_event_manager.cpp 各 level_N_pre_battle 注释，全部标注 FUN_xxxx 起源）。
+        //   例：level_0_pre_battle → {21} = TXT[21]"01大队长，赵村离这儿不远…"（说话人码 01）。
+        //   旧路径 dialogue_mgr.resolve_fight_dialogue(fight_data.intro.fight_txt) 依赖两张
+        //   被误识别的表（0x446030=战斗编排脚本码、0x448720=BGM 音轨），会把事件码当 TXT
+        //   行号取出乱序/错误文本，已废弃。
+        //   说话人码(00/01/03/06/36…) 直接索引 FACE.DAT 头像（main.cpp:1819），头像随正确文本一并修复。
+        auto events = level_events.get_pre_battle_events(loaded_fight_index, gsm.game_data());
+        std::vector<std::string> lines;
+        for (int32_t idx : events.dialogue_entries) {
+            if (idx >= 0 && idx < dialogue_mgr.dialogue_count()) {
+                lines.push_back(dialogue_mgr.get_dialogue_text(idx));
+            }
+        }
+        if (!lines.empty()) {
+            start_dialogue(dialogue_state, std::move(lines),
+                           dlzr::logic::GameMode::BATTLE);
+        }
+    };
 
     // Strategic map
     dlzr::presentation::StrategicMapRenderer map_renderer;
-    map_renderer.init(*platform, font, images);
+    map_renderer.init(*platform, font, images, face_loader);
     dlzr::presentation::StrategicMapInputHandler map_input;
 
     // Town
@@ -295,6 +533,19 @@ int main(int argc, char* argv[]) {
     bool running = true;
     uint32_t last_frame_time = platform->ticks_ms();
 
+    // 进入一场战斗的统一装配（加载 FIGHT/MAP/BLK + 注入地图 + 初始化引擎 + 装载瓦片）。
+    // MAP.DAT 尺寸 = 战斗网格尺寸（证据 map_dat_analysis.md §4：equipment_stride=MAP.DAT宽,
+    // grid_rows=MAP.DAT高），故必须在 init 前 set_map，使 init_grid 按真实地图钳制相机。
+    auto setup_battle = [&](int32_t fight_idx) {
+        loaded_fight_index = fight_idx;
+        fight_data = loader.load_fight(fight_idx);
+        current_map = loader.load_map(fight_idx);
+        current_blk = loader.load_blk_group(current_map.blk_group);
+        battle_engine.set_map(&current_map);          // 在 init 前注入：真实地图尺寸
+        battle_engine.init(fight_data, gsm.game_data(), gsm.difficulty_level());
+        battle_renderer.set_battle_map(current_map, current_blk);
+    };
+
     while (running) {
         uint32_t frame_start = platform->ticks_ms();
         uint32_t delta_ms = frame_start - last_frame_time;
@@ -310,13 +561,24 @@ int main(int argc, char* argv[]) {
             if (dialogue_state.active) {
                 auto da = dialogue_input.process_event(event);
                 if (da == dlzr::presentation::DialogueAction::ADVANCE) {
-                    advance_dialogue(dialogue_state);
+                    advance_dialogue(dialogue_state, gsm.game_data().protagonist_name);
                     if (!dialogue_state.active) {
                         gsm.set_mode(dialogue_state.return_mode);
+                        if (pending_opening_dialogue &&
+                            gsm.mode() == dlzr::logic::GameMode::BATTLE) {
+                            // 战后对话播完 → 补播新关卡的开场对话（关卡回调行为）
+                            pending_opening_dialogue = false;
+                            start_battle_opening_dialogue();
+                        }
                     }
                 } else if (da == dlzr::presentation::DialogueAction::DISMISS) {
                     dialogue_state.active = false;
                     gsm.set_mode(dialogue_state.return_mode);
+                    if (pending_opening_dialogue &&
+                        gsm.mode() == dlzr::logic::GameMode::BATTLE) {
+                        pending_opening_dialogue = false;
+                        start_battle_opening_dialogue();
+                    }
                 }
                 continue;
             }
@@ -423,37 +685,192 @@ int main(int argc, char* argv[]) {
             case dlzr::logic::GameMode::TITLE: {
                 audio.play_bgm(0);  // Title screen music
                 auto action = title_input.process_event(event, title_selected);
+                // Sound effect on menu selection confirmation, not on hover/change
                 if (action == dlzr::presentation::TitleAction::NEW_GAME) {
-                    // 初出茅庐 - New game (go to character selection)
+                    audio.play_sound(5);  // Confirm sound
+                    // 初出茅庐 → Mode 4 (CHARACTER_SELECT)
                     gsm.set_mode(dlzr::logic::GameMode::CHARACTER_SELECT);
                 } else if (action == dlzr::presentation::TitleAction::CONTINUE) {
-                    // 继往开来 - Continue/Load game
-                    gsm.set_save_load_mode(1);  // Load mode
-                    gsm.set_mode(dlzr::logic::GameMode::SAVE_LOAD);
+                    audio.play_sound(5);  // Confirm sound
+                    // 继往开来 → Mode 5 (CONTINUE_GAME)
+                    gsm.set_mode(dlzr::logic::GameMode::CONTINUE_GAME);
                 } else if (action == dlzr::presentation::TitleAction::BATTLE_HERO) {
-                    // 战斗英雄 - Battle Hero (not implemented)
+                    audio.play_sound(5);  // Confirm sound
+                    // 战斗英雄 → Mode 2 (TITLE_RANKING)
+                    gsm.set_mode(dlzr::logic::GameMode::TITLE_RANKING);
                 } else if (action == dlzr::presentation::TitleAction::SUPPORT_MODEL) {
-                    // 支前模范 - Support Model (not implemented)
+                    audio.play_sound(5);  // Confirm sound
+                    // 支前模范 → Mode 6 (VICTORY_ANIMATION/ranking)
+                    gsm.set_mode(dlzr::logic::GameMode::VICTORY_ANIMATION);
                 } else if (action == dlzr::presentation::TitleAction::REST_TROOPS) {
-                    // 部队休整 - Rest Troops (not implemented)
+                    audio.play_sound(5);  // Confirm sound
+                    // 部队休整 → Mode 3 (TITLE_REST)
+                    gsm.set_mode(dlzr::logic::GameMode::TITLE_REST);
                 } else if (action == dlzr::presentation::TitleAction::EXIT) {
                     running = false;
                 }
                 break;
             }
 
-            case dlzr::logic::GameMode::CHARACTER_SELECT: {
-                auto action = char_select_input.process_event(
-                    event, char_selected_portrait, char_selected_formation,
-                    char_slider_value, char_difficulty, char_player_name);
-                if (action == dlzr::presentation::CharacterSelectAction::CONFIRM) {
-                    // 确定 - Confirm character selection, start game
-                    gsm.set_mode(dlzr::logic::GameMode::STRATEGIC_MAP);
-                } else if (action == dlzr::presentation::CharacterSelectAction::CANCEL) {
-                    // 取消 - Cancel, return to title
+            case dlzr::logic::GameMode::TITLE_ANIMATION: {
+                // Mode 0: FLC opening animation (not yet implemented)
+                // For now, skip directly to title menu
+                gsm.set_mode(dlzr::logic::GameMode::TITLE);
+                break;
+            }
+
+            case dlzr::logic::GameMode::TITLE_RANKING: {
+                // Mode 2: 战斗英雄 ranking — any key/click returns to title
+                if (event.type == dlzr::platform::Event::Type::MouseDown ||
+                    event.type == dlzr::platform::Event::Type::KeyDown) {
                     gsm.set_mode(dlzr::logic::GameMode::TITLE);
-                } else if (action == dlzr::presentation::CharacterSelectAction::CHANGE) {
-                    // 更改 - Change (not implemented)
+                }
+                break;
+            }
+
+            case dlzr::logic::GameMode::TITLE_REST: {
+                // Mode 3: 部队休整 — "退出吗?" dialog
+                // Show modal dialog with 是/否 options
+                int32_t result = show_modal_dialog(*platform, font, images,
+                    "\xCD\xCB\xB3\xF6\xC2\xF0?",  // 退出吗?
+                    "\xCA\xC7",                      // 是
+                    "\xB7\xF1");                     // 否
+                
+                // 是 (Yes, result=0) = exit game
+                // 否 (No, result=1) = return to title
+                if (result == 0) {
+                    running = false;  // Exit game
+                } else {
+                    gsm.set_mode(dlzr::logic::GameMode::TITLE);  // Return to title
+                }
+                break;
+            }
+
+            case dlzr::logic::GameMode::CONTINUE_GAME: {
+                // Mode 5: 继往开来 — load game transition
+                gsm.set_save_load_mode(1);  // Load mode
+                gsm.set_mode(dlzr::logic::GameMode::SAVE_LOAD);
+                break;
+            }
+
+            case dlzr::logic::GameMode::VICTORY_ANIMATION: {
+                // Mode 6: 支前模范 ranking / victory scroll — any key returns to title
+                if (event.type == dlzr::platform::Event::Type::MouseDown ||
+                    event.type == dlzr::platform::Event::Type::KeyDown) {
+                    gsm.set_mode(dlzr::logic::GameMode::TITLE);
+                }
+                break;
+            }
+
+            case dlzr::logic::GameMode::CHARACTER_SELECT: {
+                // Handle naming mode
+                if (char_naming_mode) {
+                    if (event.type == dlzr::platform::Event::Type::TextInput) {
+                        // Append text to player name (convert UTF-8 to GBK)
+#ifdef _WIN32
+                        std::string gbk_text = utf8_to_gbk(event.text);
+                        size_t current_len = char_player_name.length();
+                        size_t text_len = gbk_text.length();
+                        // Limit name length to 20 bytes (about 10 Chinese chars)
+                        if (current_len + text_len <= 20) {
+                            char_player_name += gbk_text;
+                        }
+#else
+                        // Fallback: assume UTF-8 (non-Windows)
+                        size_t current_len = char_player_name.length();
+                        size_t text_len = std::strlen(event.text);
+                        if (current_len + text_len <= 20) {
+                            char_player_name += event.text;
+                        }
+#endif
+                    } else if (event.type == dlzr::platform::Event::Type::KeyDown) {
+                        if (event.key == 0x08) {  // Backspace
+                            // Delete last character (handle UTF-8)
+                            if (!char_player_name.empty()) {
+                                size_t len = char_player_name.length();
+                                // Find start of last UTF-8 character
+                                size_t pos = len - 1;
+                                while (pos > 0 && (char_player_name[pos] & 0xC0) == 0x80) {
+                                    pos--;
+                                }
+                                char_player_name.erase(pos);
+                            }
+                        } else if (event.key == 0x0D || event.key == ' ') {  // Enter or Space
+                            // Confirm name
+                            char_naming_mode = false;
+                            platform->stop_text_input();
+                        } else if (event.key == 0x1B) {  // Escape
+                            // Cancel naming
+                            char_naming_mode = false;
+                            platform->stop_text_input();
+                        }
+                    } else if (event.type == dlzr::platform::Event::Type::MouseDown &&
+                               event.mouse_button == 1) {
+                        // C4 改名体验：点击名字输入区域“外”直接确认，不必回车。
+                        // 名字显示区在 (108,374) 附近（左对齐、GBK 字体），
+                        // 以此为中心给出判定矩形；区域内点击保持输入，区域外点击确认。
+                        constexpr int32_t NAME_IN_X0 = 90,  NAME_IN_Y0 = 358;
+                        constexpr int32_t NAME_IN_X1 = 360, NAME_IN_Y1 = 398;
+                        bool inside = event.mouse_x >= NAME_IN_X0 && event.mouse_x <= NAME_IN_X1 &&
+                                      event.mouse_y >= NAME_IN_Y0 && event.mouse_y <= NAME_IN_Y1;
+                        if (!inside) {
+                            char_naming_mode = false;
+                            platform->stop_text_input();
+                        }
+                    }
+                } else {
+                    // Normal mode
+                    auto action = char_select_input.process_event(
+                        event, char_selected_portrait, char_selected_formation,
+                        char_slider_value, char_difficulty, char_player_name,
+                        char_hovered_button, char_pressed_button,
+                        char_slider_dragging);
+                    if (action == dlzr::presentation::CharacterSelectAction::CONFIRM) {
+                        audio.play_sound(6);
+                        // 原版 Mode 4(战前准备) 的"进入战斗"按钮(Button 1) 直接
+                        // → FUN_0042e0f1(开场幻灯片) → 设置战斗 → Mode 150(战斗)。
+                        // 记录玩家修改的主角名与头像，播放开场幻灯片后再进入战斗开场。
+                        dlzr::hb_step("CS_CONFIRM:set_data");
+                        gsm.game_data().protagonist_name = char_player_name;
+                        gsm.game_data().protagonist_face = 103 + char_selected_portrait;
+                        // 阵型→主角兵种、滑块→主角武力/智力（原版确认路径写入 People[0]）
+                        static constexpr int32_t FORMATION_CLASS_IDX[4] = {1, 4, 8, 11};
+                        gsm.game_data().protagonist_class_type =
+                            FORMATION_CLASS_IDX[char_selected_formation % 4];
+                        gsm.game_data().protagonist_strength = char_slider_value;
+                        gsm.game_data().protagonist_intelligence = 160 - char_slider_value;
+                        gsm.set_difficulty_level(char_difficulty);
+                        gsm.set_selected_fight(0);
+                        dlzr::hb_step("CS_CONFIRM:setup_battle");
+                        setup_battle(0);
+                        battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+                        dlzr::hb_step("CS_CONFIRM:opening_start");
+                        opening_renderer.start(gsm);
+                        dlzr::hb_step("CS_CONFIRM:set_mode_CUTSCENE");
+                        gsm.set_mode(dlzr::logic::GameMode::CUTSCENE);
+                    } else if (action == dlzr::presentation::CharacterSelectAction::CANCEL) {
+                        audio.play_sound(7);
+                        gsm.set_mode(dlzr::logic::GameMode::TITLE);
+                    } else if (action == dlzr::presentation::CharacterSelectAction::CHANGE) {
+                        audio.play_sound(6);
+                        char_naming_mode = true;
+                        platform->start_text_input();
+                    } else if (action == dlzr::presentation::CharacterSelectAction::SELECT_FORMATION) {
+                        // Trigger attack east animation and play attack sound
+                        char_select_renderer.trigger_formation_anim(char_selected_formation);
+                        // Play attack sound for this formation's class type
+                        static constexpr int32_t FORMATION_CLASS_IDX[4] = {1, 4, 8, 11};
+                        int32_t class_idx = FORMATION_CLASS_IDX[char_selected_formation];
+                        int32_t attack_snd = gsm.game_data().class_types[class_idx].audio_attack;
+                        std::fprintf(stderr, "[DEBUG] SELECT_FORMATION: formation=%d class_idx=%d audio_attack=%d\n",
+                                     char_selected_formation, class_idx, attack_snd);
+                        if (attack_snd >= 0 && attack_snd < 1024) {
+                            std::fprintf(stderr, "[DEBUG] Playing attack sound %d\n", attack_snd);
+                            audio.play_sound(attack_snd);
+                        } else {
+                            std::fprintf(stderr, "[DEBUG] Invalid sound ID, not playing\n");
+                        }
+                    }
                 }
                 break;
             }
@@ -492,6 +909,8 @@ int main(int argc, char* argv[]) {
                         gsm.set_current_shop_type(1);
                         gsm.set_mode(dlzr::logic::GameMode::SHOP);
                     } else if (result.building_index == 4) {
+                        gsm.set_level_select_return_mode(
+                            dlzr::logic::GameMode::TOWN);
                         gsm.set_mode(dlzr::logic::GameMode::LEVEL_SELECT);
                     } else if (result.building_index == 5) {
                         gsm.set_mode(dlzr::logic::GameMode::WAREHOUSE);
@@ -640,16 +1059,16 @@ int main(int argc, char* argv[]) {
                                                                 level_select_scroll);
                 gsm.set_selected_fight(selected);
                 if (action == dlzr::presentation::LevelSelectAction::BACK) {
-                    gsm.set_mode(dlzr::logic::GameMode::TOWN);
+                    gsm.set_mode(gsm.level_select_return_mode());
                 } else if (action == dlzr::presentation::LevelSelectAction::SELECT) {
                     bool unlocked = (selected == 0) ||
                                     gsm.is_fight_completed(selected - 1);
                     if (unlocked && selected < dlzr::core::MAX_FIGHTS) {
-                        fight_data = loader.load_fight(selected);
-                        battle_engine.init(fight_data, gsm.game_data(),
-                                           gsm.difficulty_level());
-                        battle_input.init(40, 40, 40);
-                        gsm.set_mode(dlzr::logic::GameMode::BATTLE_INTRO);
+                        setup_battle(selected);
+                        battle_input.init(14, 32, 48);
+                        // RE 证据: 选关进战斗 = FUN_0041b8e9 直接进 Mode150，
+                        // 无独立"战斗开场"屏（FUN_0042e2d6/FUN_0041b8e9 指令流）。
+                        gsm.set_mode(dlzr::logic::GameMode::BATTLE);
                     }
                 }
                 break;
@@ -718,54 +1137,37 @@ int main(int argc, char* argv[]) {
             }
 
             case dlzr::logic::GameMode::CUTSCENE: {
+                // 任意按键/点击可快进幻灯片；播放结束的自动跳转在帧更新里处理
                 opening_renderer.process_input(event);
-                if (!opening_renderer.is_playing()) {
-                    gsm.set_mode(dlzr::logic::GameMode::STRATEGIC_MAP);
-                }
                 break;
             }
 
-            case dlzr::logic::GameMode::BATTLE_INTRO: {
-                if (event.type == dlzr::platform::Event::Type::KeyDown ||
-                    (event.type == dlzr::platform::Event::Type::MouseDown &&
-                     event.mouse_button == 1)) {
-                    int32_t fight_idx = gsm.selected_fight();
-                    auto pre_events = level_events.get_pre_battle_events(
-                        fight_idx, gsm.game_data());
-
-                    if (pre_events.has_choice) {
-                        // Show choice dialog before battle
-                        choice_state.active = true;
-                        choice_state.prompt = pre_events.choice_prompt;
-                        choice_state.options = pre_events.choice_options;
-                        choice_state.selected = 0;
-                        choice_state.fight_index = fight_idx;
-                        choice_state.return_mode = dlzr::logic::GameMode::TOWN;
-                    } else {
-                        int32_t fight_txt = fight_data.intro.fight_txt;
-                        auto fight_dialogue = dialogue_mgr.resolve_fight_dialogue(fight_txt);
-                        if (!fight_dialogue.empty()) {
-                            start_dialogue(dialogue_state, std::move(fight_dialogue),
-                                           dlzr::logic::GameMode::BATTLE);
-                        } else {
-                            gsm.set_mode(dlzr::logic::GameMode::BATTLE);
-                        }
-                    }
-                }
-                break;
-            }
+            // 自创的 BATTLE_INTRO"战斗简报/战前对话"分支已删除。
+            // RE 证据: FUN_0042e2d6.c:244-299(确定分支) → FUN_0042e0f1(幻灯片)
+            // → FUN_0041b8e9(进战斗) → FUN_004294be(部署) → FUN_0040be07(第0关回调,
+            // 仅网格/实体放置,无对话)。原版确定→幻灯片→战斗地图上直接可操作，
+            // 中间没有简报屏，也没有战前对话（第 0 关）。
 
             case dlzr::logic::GameMode::BATTLE: {
                 audio.play_bgm(3);  // Battle music
+                static int32_t last_sel = -1;
                 if (!battle_engine.is_over()) {
                     const auto& state = battle_engine.state();
                     int32_t cur = state.current_fighter_idx;
                     if (cur >= 0 && state.fighters[cur].team == 0 && !state.fighters[cur].has_acted) {
                         auto cmd = battle_input.process_event(event, state);
+                        // 选中单位即亮出可达区域（原版 FUN_0041f424 -> FUN_00418e29）
+                        int32_t sel = battle_input.selected_fighter();
+                        if (sel != last_sel) {
+                            battle_engine.set_selected_fighter(sel);
+                            last_sel = sel;
+                        }
                         if (cmd.type != dlzr::logic::BattleCommand::NONE) {
                             battle_engine.execute_command(cmd);
                             battle_engine.advance_turn();
                         }
+                    } else {
+                        if (last_sel != -1) { battle_engine.set_selected_fighter(-1); last_sel = -1; }
                     }
                 }
                 break;
@@ -804,27 +1206,44 @@ int main(int argc, char* argv[]) {
                             fight_idx, gsm.game_data());
                         level_events.apply_strategic_effects(strat_event, gsm.game_data());
 
-                        // Strategic score check → level branching
-                        if (strat_event.check_score) {
-                            int32_t score = gsm.score();
-                            if (score >= strat_event.score_threshold) {
-                                if (strat_event.high_score_level >= 0) {
-                                    gsm.set_selected_fight(strat_event.high_score_level);
-                                }
-                            } else {
-                                if (strat_event.low_score_level >= 0) {
-                                    gsm.set_selected_fight(strat_event.low_score_level);
-                                }
+                            // ============================================================
+                            // 战后推进（原版 Mode150 的 DAT_007d50f8>=1 分支）：
+                            //   显示战后对话 → fight_index++ → FUN_004292fe → 关卡回调
+                            // 原版本关结束后**直接进入下一关**，中间没有城镇/战略地图中转屏。
+                            // 克隆的 TOWN→STRATEGIC_MAP 城市节点图是自创（原版 Mode150 就是
+                            // 战术战场本尊），属 Tier A 违规，已从新游戏链路彻底移除。
+                            // C5 关卡回调表(PTR_FUN_0044668c)未实现，此处以"推进下一关"占位。
+                            // ============================================================
+                            int32_t target = fight_idx;   // 默认重打本关
+                            bool redirected = false;
+
+                            // Strategic score check → level branching
+                            if (strat_event.check_score) {
+                                int32_t score = gsm.score();
+                                int32_t lvl = (score >= strat_event.score_threshold)
+                                                  ? strat_event.high_score_level
+                                                  : strat_event.low_score_level;
+                                if (lvl >= 0) { target = lvl; redirected = true; }
                             }
-                        }
 
-                        // Strategic level transition
-                        if (strat_event.do_transition && strat_event.target_level >= 0) {
-                            gsm.set_selected_fight(strat_event.target_level);
-                        }
+                            // Strategic level transition
+                            if (strat_event.do_transition && strat_event.target_level >= 0) {
+                                target = strat_event.target_level;
+                                redirected = true;
+                            }
 
-                        // Resolve dialogue: strategic event dialogues take priority
-                        if (!strat_event.dialogues.empty()) {
+                            if (!redirected) {
+                                if (victory) {
+                                    int32_t next_fight = fight_idx + 1;
+                                    if (next_fight < dlzr::core::MAX_FIGHTS) {
+                                        target = next_fight;   // 原版 fight_index++
+                                    }
+                                }
+                                // 战败：原版由关卡回调决定（C5 未实现）→ 重打本关占位
+                            }
+                            gsm.set_selected_fight(target);
+
+                            // 用**已完成关卡**的 fight_txt 解析战后对话（必须在重载下一关之前取）
                             std::vector<std::string> strat_texts;
                             for (int32_t idx : strat_event.dialogues) {
                                 if (idx >= 0 && idx < dialogue_mgr.dialogue_count()) {
@@ -832,22 +1251,31 @@ int main(int argc, char* argv[]) {
                                         dialogue_mgr.get_dialogue_text(idx));
                                 }
                             }
+                            const int32_t cur_fight_txt = fight_data.intro.fight_txt;
+                            auto post_dialogue =
+                                dialogue_mgr.resolve_fight_dialogue_b(cur_fight_txt);
+
+                            // 载入目标关卡：战后对话结束后直接进入下一关的战斗开场
+                            setup_battle(target);
+                            battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+
+                            // Resolve dialogue: strategic event dialogues take priority
                             if (!strat_texts.empty()) {
+                                pending_opening_dialogue = true;
                                 start_dialogue(dialogue_state, std::move(strat_texts),
-                                               dlzr::logic::GameMode::TOWN);
+                                               dlzr::logic::GameMode::BATTLE);
                                 break;
                             }
-                        }
 
-                        // Resolve SubB (post-battle) dialogue sequence
-                        int32_t fight_txt = fight_data.intro.fight_txt;
-                        auto post_dialogue = dialogue_mgr.resolve_fight_dialogue_b(fight_txt);
-                        if (!post_dialogue.empty()) {
-                            start_dialogue(dialogue_state, std::move(post_dialogue),
-                                           dlzr::logic::GameMode::TOWN);
-                        } else {
-                            gsm.set_mode(dlzr::logic::GameMode::TOWN);
-                        }
+                            // Resolve SubB (post-battle) dialogue sequence
+                            if (!post_dialogue.empty()) {
+                                pending_opening_dialogue = true;
+                                start_dialogue(dialogue_state, std::move(post_dialogue),
+                                               dlzr::logic::GameMode::BATTLE);
+                            } else {
+                                gsm.set_mode(dlzr::logic::GameMode::BATTLE);
+                                start_battle_opening_dialogue();
+                            }
                     }
                 }
                 break;
@@ -858,19 +1286,15 @@ int main(int argc, char* argv[]) {
                 if (event.type == dlzr::platform::Event::Type::KeyDown) {
                     if (event.key == '1') {
                         // 模拟模式: replay fight 36 as tactical battle
-                        fight_data = loader.load_fight(36);
-                        battle_engine.init(fight_data, gsm.game_data(),
-                                           gsm.difficulty_level());
-                        battle_input.init(40, 40, 40);
-                        gsm.set_mode(dlzr::logic::GameMode::BATTLE_INTRO);
+                        setup_battle(36);
+                        battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+                        gsm.set_mode(dlzr::logic::GameMode::BATTLE);
                     } else if (event.key == '2' && gsm.is_narrative_mode_unlocked()) {
                         // 虚构模式: skip to fight 40 narrative
                         gsm.set_selected_fight(40);
-                        fight_data = loader.load_fight(40);
-                        battle_engine.init(fight_data, gsm.game_data(),
-                                           gsm.difficulty_level());
-                        battle_input.init(40, 40, 40);
-                        gsm.set_mode(dlzr::logic::GameMode::BATTLE_INTRO);
+                        setup_battle(40);
+                        battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+                        gsm.set_mode(dlzr::logic::GameMode::BATTLE);
                     } else if (event.key == '3' || event.key == 0x1B) {
                         gsm.set_mode(dlzr::logic::GameMode::TOWN);
                     }
@@ -881,18 +1305,14 @@ int main(int argc, char* argv[]) {
                     // 3 choices centered: y=200,240,280
                     if (mx >= 200 && mx <= 440) {
                         if (my >= 190 && my <= 215) {
-                            fight_data = loader.load_fight(36);
-                            battle_engine.init(fight_data, gsm.game_data(),
-                                               gsm.difficulty_level());
-                            battle_input.init(40, 40, 40);
-                            gsm.set_mode(dlzr::logic::GameMode::BATTLE_INTRO);
+                            setup_battle(36);
+                            battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+                            gsm.set_mode(dlzr::logic::GameMode::BATTLE);
                         } else if (my >= 230 && my <= 255 && gsm.is_narrative_mode_unlocked()) {
                             gsm.set_selected_fight(40);
-                            fight_data = loader.load_fight(40);
-                            battle_engine.init(fight_data, gsm.game_data(),
-                                               gsm.difficulty_level());
-                            battle_input.init(40, 40, 40);
-                            gsm.set_mode(dlzr::logic::GameMode::BATTLE_INTRO);
+                            setup_battle(40);
+                            battle_input.init(14, 32, 48);  // 视口原点(14,32)+48px格（FUN_0041be02: 0xe,0x20,0x30*0x30? 640/432判定）
+                            gsm.set_mode(dlzr::logic::GameMode::BATTLE);
                         } else if (my >= 270 && my <= 295) {
                             gsm.set_mode(dlzr::logic::GameMode::TOWN);
                         }
@@ -906,6 +1326,26 @@ int main(int argc, char* argv[]) {
                 if (ending_renderer.is_finished()) {
                     gsm.set_mode(dlzr::logic::GameMode::TITLE);
                 }
+                break;
+            }
+
+            // Town sub-menus (original modes 51-58) — stubs returning to TOWN
+            case dlzr::logic::GameMode::ARMY_INFO:
+            case dlzr::logic::GameMode::RECRUIT:
+            case dlzr::logic::GameMode::RECRUIT_DETAIL:
+            case dlzr::logic::GameMode::MINE_PLACEMENT:
+            case dlzr::logic::GameMode::CONFIRM_DIALOG: {
+                // Any key/click returns to town hub
+                if (event.type == dlzr::platform::Event::Type::MouseDown ||
+                    event.type == dlzr::platform::Event::Type::KeyDown) {
+                    gsm.set_mode(dlzr::logic::GameMode::TOWN);
+                }
+                break;
+            }
+
+            case dlzr::logic::GameMode::RESET: {
+                // Mode 999: reset to title
+                gsm.set_mode(dlzr::logic::GameMode::TITLE);
                 break;
             }
 
@@ -941,7 +1381,7 @@ int main(int argc, char* argv[]) {
                             if (cidx >= 0 && cidx < dlzr::core::MAX_CLASS_TYPES) {
                                 flm_idx = gsm.game_data().class_types[cidx].flm_attack;
                                 int32_t snd = gsm.game_data().class_types[cidx].audio_attack;
-                                if (snd >= 0 && snd < 152) audio.play_sound(snd);
+                                if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                             }
                         }
                     }
@@ -950,7 +1390,7 @@ int main(int argc, char* argv[]) {
                     if (sk >= 0 && sk < dlzr::core::MAX_SKILLS) {
                         flm_idx = gsm.game_data().skills[sk].flm_index;
                         int32_t snd = gsm.game_data().skills[sk].audio_index;
-                        if (snd >= 0 && snd < 152) audio.play_sound(snd);
+                        if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                     }
                     if (ev.source_idx >= 0 && tx >= 0 && ty >= 0) {
                         int32_t skill_type = (sk >= 0 && sk < dlzr::core::MAX_SKILLS)
@@ -963,7 +1403,7 @@ int main(int argc, char* argv[]) {
                     if (mi > 0 && mi < dlzr::core::MAX_DILEI) {
                         flm_idx = gsm.game_data().mines[mi].flm_index;
                         int32_t snd = gsm.game_data().mines[mi].audio_index;
-                        if (snd >= 0 && snd < 152) audio.play_sound(snd);
+                        if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                         if (tx >= 0 && ty >= 0) {
                             battle_anim_controller.queue_impact(tx, ty);
                             battle_anim_controller.queue_damage_number(
@@ -988,7 +1428,7 @@ int main(int argc, char* argv[]) {
                             int32_t cidx = fight_data.people[pidx].class_type;
                             if (cidx >= 0 && cidx < dlzr::core::MAX_CLASS_TYPES) {
                                 int32_t snd = gsm.game_data().class_types[cidx].audio_move;
-                                if (snd >= 0 && snd < 152) audio.play_sound(snd);
+                                if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                             }
                         }
                     }
@@ -1010,25 +1450,37 @@ int main(int argc, char* argv[]) {
         battle_anim_controller.update(delta_ms);
 
         if (dialogue_state.active) {
-            // Auto-advance typewriter effect
+            // 原版 FUN_0043d82f.c 一次性渲染整段文本（FUN_004061df 整段 buffer），
+            // 无逐字打字机。这里直接整页显示：每帧把 visible_chars 设为全量。
             const auto& text = dialogue_state.parsed[dialogue_state.current_index].text;
+            std::string display = format_dialogue_text(text, gsm.game_data().protagonist_name);
             int32_t total_chars = 0;
             size_t pos = 0;
-            while (pos < text.size()) {
-                uint8_t b = static_cast<uint8_t>(text[pos]);
+            while (pos < display.size()) {
+                uint8_t b = static_cast<uint8_t>(display[pos]);
                 pos += (b < 0x80) ? 1 : 2;
                 total_chars++;
             }
-            bool text_scrolling = (dialogue_state.visible_chars < total_chars);
-            if (text_scrolling) {
-                dialogue_state.visible_chars++;
-            }
-            // Update portrait animation
-            dialogue_renderer.update_animation(delta_ms, text_scrolling);
+            dialogue_state.visible_chars = total_chars;  // 整页显示，不自创逐字动画
         }
 
         anim_player.update();
+        char_select_renderer.update_anim(delta_ms);
         opening_renderer.update(delta_ms);
+        dlzr::hb_step("UPDATE_DONE");
+        // 确定链路（RE 证据坐标）：
+        //   FUN_0042e2d6.c:244-299(确定分支) → FUN_0042e0f1(幻灯片模态,仅左键结束)
+        //   → FUN_0041b8e9(进战斗) → FUN_004294be(部署) → BGM
+        //   → PTR_FUN_004465d0[0]=FUN_0040be07(第0关回调: 网格/实体放置
+        //     + FUN_0043dd47 开场事件脚本)。
+        // 链路上没有任何独立"战斗简报屏"（自创 BATTLE_INTRO 已删除）。
+        // walk19.log 实测时序: MAP 出现 → dialog dismiss → select，
+        // 故幻灯片结束后直接进 BATTLE，开场对话以覆盖层叠在地图上弹出。
+        if (gsm.mode() == dlzr::logic::GameMode::CUTSCENE &&
+            !opening_renderer.is_playing()) {
+            gsm.set_mode(dlzr::logic::GameMode::BATTLE);
+            start_battle_opening_dialogue();
+        }
         ending_renderer.update(delta_ms);
         audio.update(delta_ms);
 
@@ -1040,13 +1492,85 @@ int main(int argc, char* argv[]) {
             title_renderer.render(title_selected, gsm.difficulty_level());
             break;
 
-        case dlzr::logic::GameMode::CHARACTER_SELECT:
+        case dlzr::logic::GameMode::TITLE_ANIMATION:
+            // TODO: FLC animation — for now just show title bg
+            title_renderer.render(title_selected, gsm.difficulty_level());
+            break;
+
+        case dlzr::logic::GameMode::TITLE_RANKING: {
+            // Mode 2: 战斗英雄排行榜 — 英雄战绩排名（数据驱动）
+            platform->clear(10, 14, 30);
+            font.draw_text(214, 36, "\xD5\xBD\xB6\xD3\xD3\xA2\xC4\xCF\xC5\xC5\xD0\xD0\xB0\xE5",
+                           255, 215, 0);  // 战斗英雄排行榜
+
+            const auto& gd = gsm.game_data();
+            std::vector<std::pair<std::string, int32_t>> heroes;
+            for (int32_t i = 0; i < dlzr::core::MAX_PEOPLE; ++i) {
+                const auto& p = gd.people[i];
+                if (p.enemy != 0) continue;  // 仅我方
+                std::string nm;
+                for (char c : p.name) { if (!c) break; nm += c; }
+                if (nm.empty()) continue;
+                // 战绩 = 等级*1000 + 经验（仅作排名展示）
+                heroes.emplace_back(nm, p.level * 1000 + (p.experience % 1000));
+            }
+            std::sort(heroes.begin(), heroes.end(),
+                      [](const auto& a, const auto& b) { return a.second > b.second; });
+
+            int32_t y = 92;
+            char line[80];
+            for (size_t k = 0; k < heroes.size() && k < 16; ++k) {
+                std::snprintf(line, sizeof(line), "%2d. %-14s  等级 %2d   战绩 %4d",
+                              (int)(k + 1), heroes[k].first.c_str(),
+                              heroes[k].second / 1000, heroes[k].second % 1000);
+                font.draw_text(150, y, line, 232, 232, 220);
+                y += 23;
+            }
+            font.draw_text(150, 466, "\xB5\xE7\xBB\xF7\xC8\xB7\xB7\xF1\xB5\xBD\xB1\xEA\xCC\xF5\xC4\xBF\xC2\xB7",
+                           140, 140, 140);  // 点击任意处返回标题
+            break;
+        }
+
+        case dlzr::logic::GameMode::VICTORY_ANIMATION: {
+            // Mode 6: 胜利动画 / 支前模范 — 显示胜利画面（点击/按键返回标题）
+            platform->clear(12, 10, 8);
+            font.draw_text(280, 180, "\xCA\xFA\xC1\xBF", 255, 230, 80);  // 胜利
+            font.draw_text(150, 250,
+                "\xBF\xCD\xC8\xCB\xC3\xD7\xB5\xC4\xBF\xD5\xB5\xD8\xB2\xBB\xB6\xC8\xC0\xEB\xB4\xF3",
+                220, 220, 220);  // 敌人的根据地不断被扩大（近似）
+            font.draw_text(150, 300,
+                "\xD5\xBD\xB6\xD3\xBD\xF1\xBD\xE1\xCA\xC7\xC4\xFA\xD3\xC5\xC4\xE3\xC3\xF1\xB5\xC4\xCA\xB5\xC3\xFB",
+                200, 200, 200);  // 战斗结束是你们人民的胜利
+            font.draw_text(150, 466, "\xB5\xE7\xBB\xF7\xC8\xB7\xB7\xF1\xB5\xBD\xB1\xEA\xCC\xF5\xC4\xBF\xC2\xB7",
+                           140, 140, 140);  // 点击任意处返回标题
+            break;
+        }
+
+        case dlzr::logic::GameMode::CONTINUE_GAME:
+            // Transition mode — immediately goes to SAVE_LOAD
+            title_renderer.render(title_selected, gsm.difficulty_level());
+            break;
+
+        case dlzr::logic::GameMode::CHARACTER_SELECT: {
+            // Formation class names from class_types[indices 1,4,8,11]
+            static constexpr int32_t FORMATION_CLASS_IDX[4] = {1, 4, 8, 11};
+            const char* formation_names[4];
+            for (int i = 0; i < 4; ++i) {
+                formation_names[i] = gsm.game_data().class_types[FORMATION_CLASS_IDX[i]].name.data();
+            }
+            dlzr::hb_step("CS_RENDER_BEGIN");
             char_select_renderer.render(char_selected_portrait,
                                         char_selected_formation,
                                         char_slider_value,
                                         char_difficulty,
-                                        char_player_name);
+                                        char_player_name,
+                                        formation_names,
+                                        char_hovered_button,
+                                        char_pressed_button,
+                                        char_naming_mode);
+            dlzr::hb_step("CS_RENDER_END");
             break;
+        }
 
         case dlzr::logic::GameMode::STRATEGIC_MAP:
             map_renderer.render(gsm.game_data(), gsm.game_data().current_town);
@@ -1099,10 +1623,6 @@ int main(int argc, char* argv[]) {
             }
             break;
         }
-
-        case dlzr::logic::GameMode::BATTLE_INTRO:
-            battle_intro.render(fight_data.intro);
-            break;
 
         case dlzr::logic::GameMode::BATTLE:
             battle_renderer.render(battle_engine.state(), fight_data, gsm.game_data());
@@ -1197,6 +1717,62 @@ int main(int argc, char* argv[]) {
             break;
         }
 
+        case dlzr::logic::GameMode::ARMY_INFO: {
+            // Mode 51: 军队信息 — 我方人员名册
+            platform->clear(14, 12, 10);
+            font.draw_text(280, 30, "\xBE\xFC\xB6\xD3\xD0\xC2\xCF\xA2", 255, 215, 0);  // 军队信息
+
+            const auto& gd = gsm.game_data();
+            int32_t y = 76;
+            char line[96];
+            std::snprintf(line, sizeof(line), "%-14s %-8s %4s %4s %4s %6s",
+                          "姓名", "兵种", "等级", "武力", "智力", "经验");
+            font.draw_text(60, y, line, 180, 200, 255);
+            y += 26;
+            for (int32_t i = 0; i < dlzr::core::MAX_PEOPLE && y < 456; ++i) {
+                const auto& p = gd.people[i];
+                if (p.enemy != 0) continue;
+                std::string nm;
+                for (char c : p.name) { if (!c) break; nm += c; }
+                if (nm.empty()) continue;
+                const char* cls = (p.class_type >= 0 &&
+                    p.class_type < dlzr::core::MAX_CLASS_TYPES)
+                    ? gd.class_types[p.class_type].name.data() : "";
+                std::string cls_nm;
+                for (char c : std::string(cls)) { if (!c) break; cls_nm += c; }
+                std::snprintf(line, sizeof(line), "%-14s %-8s %4d %4d %4d %6d",
+                              nm.c_str(), cls_nm.c_str(), p.level,
+                              p.strength, p.intelligence, p.experience);
+                font.draw_text(60, y, line, 230, 230, 220);
+                y += 22;
+            }
+            font.draw_text(540, 40, "\xB7\xB5\xBB\xD8", 255, 255, 255);  // 返回
+            break;
+        }
+
+        case dlzr::logic::GameMode::CONFIRM_DIALOG: {
+            // Mode 58: 确认对话框
+            platform->clear(10, 10, 10);
+            platform->fill_rect(180, 180, 280, 120, 40, 40, 60);
+            platform->draw_rect(180, 180, 280, 120, 255, 215, 0);
+            font.draw_text(250, 205, "\xC8\xB7\xC8\xCF\xC2\xF0\xA3\xBF", 255, 255, 255);  // 确认吗？
+            font.draw_text(230, 250, "\xCA\xC7", 120, 255, 120);   // 是
+            font.draw_text(360, 250, "\xB7\xF1", 255, 120, 120);   // 否
+            break;
+        }
+
+        case dlzr::logic::GameMode::RECRUIT:
+        case dlzr::logic::GameMode::RECRUIT_DETAIL:
+        case dlzr::logic::GameMode::MINE_PLACEMENT:
+            // TODO: dedicated renderers for recruit / mine-placement
+            town_renderer.render(gsm.game_data().towns[gsm.game_data().current_town],
+                                 gsm.game_data().current_town);
+            break;
+
+        case dlzr::logic::GameMode::RESET:
+            // Transition mode — no render needed
+            break;
+
         default:
             break;
         }
@@ -1232,13 +1808,30 @@ int main(int argc, char* argv[]) {
         // Overlay: dialogue box
         if (dialogue_state.active && !dialogue_state.parsed.empty()) {
             const auto& d = dialogue_state.parsed[dialogue_state.current_index];
-            std::string speaker_name = get_speaker_name(d.speaker_id, gsm.game_data());
+            // Substitute GG(protagonist)/TT tokens; AA/BB/CC/DD are kept for colouring
+            std::string display = format_dialogue_text(
+                d.text, gsm.game_data().protagonist_name);
+            std::string speaker_name;
+            int32_t face_idx = -1;
+            if (d.speaker_id == 0) {
+                // 主角（大队长）：使用玩家命名
+                speaker_name = gsm.game_data().protagonist_name;
+            } else if (d.speaker_id > 0 && d.speaker_id < dlzr::core::MAX_PEOPLE) {
+                speaker_name = get_speaker_name(d.speaker_id, gsm.game_data());
+            }
+            // 头像按说话人码直接索引 FACE 缓冲（原版 FUN_0043d82f.c:41：
+            //   FUN_00422f68(0x82,0x134,0x50,100, &DAT_004761f8 + param_1*8000)，
+            //   param_1 即说话人码；FACE.DAT 共 170 张，码 0-99 均合法）。
+            // 敌人(40-99)此前走 people[].face 越界而永不显示，现统一按码索引。
+            if (d.speaker_id >= 0 &&
+                d.speaker_id < dlzr::app::FaceLoader::FACE_COUNT) {
+                face_idx = d.speaker_id;
+            }
             const uint8_t* face_rgba = nullptr;
-            if (d.speaker_id >= 0 && d.speaker_id < dlzr::core::MAX_PEOPLE) {
-                int32_t face_idx = gsm.game_data().people[d.speaker_id].face;
+            if (face_idx >= 0) {
                 face_rgba = face_loader.get_face_rgba(face_idx);
             }
-            dialogue_renderer.render(speaker_name, d.text,
+            dialogue_renderer.render(speaker_name, display,
                                      dialogue_state.visible_chars, face_rgba);
         }
 
@@ -1248,6 +1841,21 @@ int main(int argc, char* argv[]) {
         }
 
         platform->present();
+        dlzr::hb_step("POST_PRESENT");
+
+        // 心跳埋点：Mode 切换必有记录；每 30 帧记录一次。卡死时最后一行
+        // （含 WATCHDOG STALL）即卡住的屏/帧/子步骤。
+        g_frame_count++;
+        {
+            dlzr::logic::GameMode cur = gsm.mode();
+            static dlzr::logic::GameMode s_last_mode =
+                static_cast<dlzr::logic::GameMode>(-1);
+            if (cur != s_last_mode) {
+                s_last_mode = cur;
+                dlzr::hb_mode(mode_name(cur));
+            }
+            dlzr::hb_frame(g_frame_count);
+        }
 
         uint32_t frame_elapsed = platform->ticks_ms() - frame_start;
         if (frame_elapsed < FRAME_MS) {

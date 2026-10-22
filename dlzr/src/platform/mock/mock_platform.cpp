@@ -48,6 +48,12 @@ void MockPlatform::draw_texture_rect(TextureHandle /*tex*/,
                                      int32_t /*dst_w*/, int32_t /*dst_h*/) {
 }
 
+void MockPlatform::draw_texture_sub(TextureHandle /*tex*/,
+                                    int32_t /*src_x*/, int32_t /*src_y*/,
+                                    int32_t /*src_w*/, int32_t /*src_h*/,
+                                    int32_t /*dst_x*/, int32_t /*dst_y*/) {
+}
+
 void MockPlatform::destroy_texture(TextureHandle tex) {
     textures_.erase(tex);
 }
@@ -91,6 +97,12 @@ void MockPlatform::delay_ms(uint32_t ms) {
 
 uint32_t MockPlatform::ticks_ms() {
     return current_time_;
+}
+
+void MockPlatform::start_text_input() {
+}
+
+void MockPlatform::stop_text_input() {
 }
 
 }  // namespace dlzr::platform

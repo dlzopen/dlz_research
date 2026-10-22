@@ -27,20 +27,34 @@ core::GameData DatLoader::load_game_data() const {
     }
 
     // GAME.DAT: multiple sections
-    // Layout (from binary template analysis):
-    //   +0x000: What0 (160 bytes)
-    //   +0x0A0: DiXingModifier[16] (320 bytes)
-    //   +0x1E0: BingZhong[96] (15360 bytes) — ClassType
-    //   +0x3FE0: BingZhongYiDong[96] (1536 bytes)
-    //   +0x43E0: WuPin[160] (11520 bytes) — Items
-    //   +0x70E0: Material[10] (280 bytes)
-    //   +0x71F8: DiLeiRecipe[10] (100 bytes) — actually at 29176
-    //   +0x725C: DiLei[10] (480 bytes) — actually at 29276
-    //   +0x743C: JiNeng[16] (640 bytes) — actually at 29756
+    // 兵种表(ClassType) 真实基址 = 0x1E0（已用 GAME.DAT 字节实证 + 逆向三重校验）：
+    //   · 角色选择阵型→兵种表 DAT_00447b78 = {1,4,8,11}，须映射到
+    //     {手枪队,大刀队,步枪队,骑兵队}；仅当基址=0x1E0 时索引 1=手枪队、4=大刀队、
+    //     8=步枪队、11=骑兵队 成立（0x0320 下索引1=冲锋队，与玩家"手枪队"选择矛盾）。
+    //   · FUN_0042e2d6.c:257 武器映射 class1→物品100→WuPin[99]=转轮式手枪，与用户确认一致。
+    //   · PEOPLE.DAT 孙悟空 bingzhong=0 → 神仙队(0x1E0[0])、李向阳=1→手枪队(0x1E0[1])，
+    //     与原作人物设定吻合。
+    //   ⚠️ output/data_dictionary.md §3 把兵种表标在 0x0320 是误标（漏掉 0x1E0 起始的
+    //     神仙队/手枪队两条记录，整体后移 320 字节），以本代码 + 字节实证为准。
+    //   +0x0000: What0 (160 B)
+    //   +0x00A0: DiXingModifier[16] (640 B)
+    //   +0x1E0: BingZhong[96] (15360 B) — ClassType（真实基址，非 data_dictionary 的 0x0320）
+    //   +0x3F20: BingZhongYiDong[96] (1536 B)           （地形移动消耗，本加载器暂未使用）
+    //   +0x43E0: WuPin[160] (11520 B) — Items
+    //   +0x7260: Material[10] (320 B)
+    //   +0x73A0: DiLeiRecipe[10] (100 B)
+    //   +0x7404: DiLei[10] (480 B)                      ← 此前误用 0x725C
+    //   +0x75E4: JiNeng[16] (768 B)                     ← 此前误用 0x743C
+    //   +0x78E4: SelectFanwei[16] (1296 B)
+    //   +0x7DF0: ApplyFanwei[48] (9408 B)
+    //   +0xA310: WuPinValid[160×96] (15360 B) — 兼容矩阵（本加载器按文件末尾 15360 字节读取）
     {
         BinaryReader reader(resolve("GAME.DAT"));
 
-        // ClassType (BingZhong): offset 0x1E0 = 480
+        // ClassType (BingZhong): offset 0x1E0（实证基址；data_dictionary.md 误标 0x0320）。
+        // 证据：FUN_0042e2d6.c:257 阵型→兵种 DAT_00447b78={1,4,8,11}，须→
+        //   {手枪队,大刀队,步枪队,骑兵队}，仅 0x1E0 成立（0x1E0[1]=手枪队 等）。
+        //   PEOPLE.DAT 孙悟空 bingzhong=0→神仙队、李向阳=1→手枪队 亦吻合。
         constexpr size_t kClassTypeOffset = 0x1E0;
         for (int i = 0; i < core::MAX_CLASS_TYPES; ++i) {
             size_t offset = kClassTypeOffset + static_cast<size_t>(i) * sizeof(core::ClassType);
@@ -56,11 +70,12 @@ core::GameData DatLoader::load_game_data() const {
             reader.read_bytes(offset, &gd.items[i], sizeof(core::WuPin));
         }
 
-        // DiLei (mines): offset after Material and DiLeiRecipe
-        // Material[10] at 28896, size 280 → 29176
-        // DiLeiRecipe[10] at 29176, size 100 → 29276
-        // DiLei[10] at 29276
-        constexpr size_t kDiLeiOffset = 29276;
+        // DiLei (mines): 权威偏移 0x7404（证据 data_dictionary.md §3 + 真实抽取：
+        //   0x7404 处 10 条均为合法地雷名 轰天雷/补给/激励/…）。
+        // 注意：DiLei/DiLeiRecipe/JiNeng 记录的 name 字段实际位于记录 +0x08
+        //   （data_dictionary.md 已注明模板偏移偏差），本结构体 name@+0x00 仅影响名称显示，
+        //   数值字段（damage/effect_type 等）随本偏移修正后已对准正确记录。
+        constexpr size_t kDiLeiOffset = 0x7404;
         for (int i = 0; i < core::MAX_DILEI; ++i) {
             size_t offset = kDiLeiOffset + static_cast<size_t>(i) * sizeof(core::DiLei);
             if (offset + sizeof(core::DiLei) > reader.size()) break;
@@ -81,13 +96,30 @@ core::GameData DatLoader::load_game_data() const {
             reader.read_bytes(kRecipeOffset, &gd.mine_recipe, sizeof(core::DiLeiRecipe));
         }
 
-        // JiNeng (skills): offset after DiLei
-        // DiLei[10] at 29276, size 480 → 29756
-        constexpr size_t kJiNengOffset = 29756;
+        // JiNeng (skills): 权威偏移 0x75E4（证据 data_dictionary.md §3 + 真实抽取：
+        //   0x75E4 处 16 条为合法技能名 掠夺/反间/疑兵/督战/暗杀/施毒/空袭）。
+        // （name 字段同 DiLei 位于记录 +0x08，见上注。）
+        constexpr size_t kJiNengOffset = 0x75E4;
         for (int i = 0; i < core::MAX_SKILLS; ++i) {
             size_t offset = kJiNengOffset + static_cast<size_t>(i) * sizeof(core::JiNeng);
             if (offset + sizeof(core::JiNeng) > reader.size()) break;
             reader.read_bytes(offset, &gd.skills[i], sizeof(core::JiNeng));
+        }
+
+        // 兵种×物品兼容性矩阵 battle_config_3 @ 0x95EB88 (= WuPinValid wpv)
+        // GAME.DAT 末尾 (MAX_WUPIN × MAX_CLASS_TYPES) 字节 / last 15360 bytes
+        // 每行 96 字节（每兵种 1 字节，非零=可装备）
+        constexpr size_t kCompatSize =
+            static_cast<size_t>(core::MAX_WUPIN) * core::MAX_CLASS_TYPES;  // 160 × 96 = 15360
+        if (reader.size() >= kCompatSize) {
+            size_t compat_offset = reader.size() - kCompatSize;
+            std::vector<uint8_t> buf = reader.read_vector(compat_offset, kCompatSize);
+            for (int item_idx = 0; item_idx < core::MAX_WUPIN; ++item_idx) {
+                for (int cls = 0; cls < core::MAX_CLASS_TYPES; ++cls) {
+                    gd.wupin_compat[item_idx][cls] =
+                        buf[static_cast<size_t>(item_idx) * core::MAX_CLASS_TYPES + cls];
+                }
+            }
         }
     }
 
@@ -133,6 +165,76 @@ core::FightData DatLoader::load_fight(int32_t fight_index) const {
     }
 
     return fd;
+}
+
+// ============================================================
+// MAP.DAT / BLK.DAT — 战斗地图瓦片数据
+// 证据: output/map_dat_analysis.md §1/§2（格式）+ scripts/export_map.py（解析实现，
+// 渲染结果与原版截图逐像素吻合）。MAP.DAT 与 FIGHT.DAT 按 1:1 索引对应（47 关）。
+// ============================================================
+core::FightMap DatLoader::load_map(int32_t map_index) const {
+    if (map_index < 0 || map_index >= 47) {
+        throw std::out_of_range("map_index out of range (0-46)");
+    }
+
+    BinaryReader reader(resolve("MAP.DAT"));
+    // 512 字节索引表后，47 个地图记录顺序排列（索引表 offset 字段不做随机访问用，
+    // 与 export_map.py 一致按顺序读取）。
+    size_t off = 0x200;
+    for (int32_t i = 0; i <= map_index; ++i) {
+        const uint16_t w = reader.read_at<uint16_t>(off);
+        const uint16_t h = reader.read_at<uint16_t>(off + 2);
+        // +0x04 blk_file[12], +0x10 pal_file[12]
+        char blk_file[13] = {};
+        reader.read_bytes(off + 4, blk_file, 12);
+        const size_t data_off = off + 0x1C;
+        const size_t record_size = 0x1C + static_cast<size_t>(w) * h * 2;
+
+        if (i == map_index) {
+            core::FightMap fm;
+            fm.width = w;
+            fm.height = h;
+            // "dlz-NN.blk" → NN（证据: map_dat_analysis.md §1.3，digit 在 [4][5]）
+            if (blk_file[4] >= '0' && blk_file[4] <= '9') {
+                fm.blk_group = (blk_file[4] - '0') * 10;
+                if (blk_file[5] >= '0' && blk_file[5] <= '9') {
+                    fm.blk_group += blk_file[5] - '0';
+                }
+            }
+            fm.tiles.resize(static_cast<size_t>(w) * h);
+            for (size_t t = 0; t < fm.tiles.size(); ++t) {
+                fm.tiles[t] = reader.read_at<uint16_t>(data_off + t * 2);
+            }
+            return fm;
+        }
+        off += record_size;
+    }
+    throw std::runtime_error("MAP.DAT: record not found");
+}
+
+core::BlkGroupData DatLoader::load_blk_group(int32_t blk_group) const {
+    if (blk_group < 0 || blk_group >= 0x40) {
+        throw std::out_of_range("blk_group out of range");
+    }
+
+    BinaryReader reader(resolve("BLK.DAT"));
+    // 64 × (offset u32, length u32) 索引；组数据顺序排列（与 export_map.py 一致）。
+    // 简化：直接顺序扫到目标组（组内 tile = 48*48 字节调色板索引）。
+    size_t off = 0x200;  // 索引表 64*8 = 512 字节
+    for (int32_t g = 0; g < blk_group; ++g) {
+        const uint32_t len = reader.read_at<uint32_t>(g * 8 + 4);
+        off += len;
+    }
+    const uint32_t len = reader.read_at<uint32_t>(blk_group * 8 + 4);
+    core::BlkGroupData bg;
+    const size_t tile_bytes = 48 * 48;
+    bg.tiles.reserve(len / tile_bytes);
+    for (size_t t = 0; t + tile_bytes <= len; t += tile_bytes) {
+        std::vector<uint8_t> tile(tile_bytes);
+        reader.read_bytes(off + t, tile.data(), tile_bytes);
+        bg.tiles.push_back(std::move(tile));
+    }
+    return bg;
 }
 
 std::vector<std::string> DatLoader::load_dialogues() const {
@@ -183,10 +285,11 @@ std::vector<uint8_t> DatLoader::load_wave_clip(int32_t wave_id) const {
     BinaryReader reader(resolve("WAVE.DAT"));
 
     // WAVE.DAT: 8KB index + raw PCM
-    // 152 clips, mono 22050Hz 16-bit
-    // Index at offset 0: 152 entries × {offset(4), size(4)} = 1216 bytes
-    // PCM data follows after the index
-    if (wave_id < 0 || wave_id >= 152) {
+    // 1024 index slots, 152 non-empty clips
+    // mono 22050Hz 16-bit
+    // Index at offset 0: 1024 entries × {offset(4), size(4)} = 8192 bytes
+    // PCM data follows after the index (at file offset 0x2000)
+    if (wave_id < 0 || wave_id >= 1024) {
         throw std::out_of_range("wave_id out of range");
     }
 
@@ -194,7 +297,13 @@ std::vector<uint8_t> DatLoader::load_wave_clip(int32_t wave_id) const {
     uint32_t pcm_offset = reader.read_at<uint32_t>(index_offset);
     uint32_t pcm_size = reader.read_at<uint32_t>(index_offset + 4);
 
-    return reader.read_vector(pcm_offset, pcm_size);
+    if (pcm_size == 0) {
+        throw std::out_of_range("wave_id has no data");
+    }
+
+    // pcm_offset is relative to data section start (0x2000)
+    constexpr size_t DATA_SECTION_OFFSET = 0x2000;
+    return reader.read_vector(DATA_SECTION_OFFSET + pcm_offset, pcm_size);
 }
 
 }  // namespace dlzr::app

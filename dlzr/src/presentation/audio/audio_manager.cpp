@@ -19,21 +19,28 @@ void AudioManager::set_mod_dir(const std::string& mod_dir) {
 
 void AudioManager::play_sound(int32_t wave_id) {
     if (!platform_ || !loader_) {
+        std::fprintf(stderr, "[AUDIO] play_sound(%d): platform or loader is null\n", wave_id);
         return;
     }
 
     auto it = cache_.find(wave_id);
     if (it == cache_.end()) {
         try {
+            std::fprintf(stderr, "[AUDIO] Loading wave clip %d...\n", wave_id);
             cache_[wave_id] = loader_->load_wave_clip(wave_id);
             it = cache_.find(wave_id);
-        } catch (const std::exception&) {
+            std::fprintf(stderr, "[AUDIO] Loaded wave clip %d: %zu bytes\n", wave_id, it->second.size());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[AUDIO] Failed to load wave clip %d: %s\n", wave_id, e.what());
             return;
         }
     }
 
     if (it != cache_.end() && !it->second.empty()) {
+        std::fprintf(stderr, "[AUDIO] Playing sound %d (%zu bytes)\n", wave_id, it->second.size());
         platform_->play_sound(it->second.data(), it->second.size());
+    } else {
+        std::fprintf(stderr, "[AUDIO] Sound %d is empty or not in cache\n", wave_id);
     }
 }
 

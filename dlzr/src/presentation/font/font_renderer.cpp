@@ -104,6 +104,9 @@ void FontRenderer::render_ascii_glyph(uint8_t* dst, int32_t dst_w,
                                         uint8_t r, uint8_t g, uint8_t b) {
     if (asc16_.empty()) return;
 
+    // ASC16 字形为 8x16 原生半角，不做横向放大。
+    // 证据 FUN_004056ab.c: ASCII 字形 FUN_004052f3 步进 uVar1 += 8（8px 半角），
+    // 与 GBK 的 uVar1 += 0x10（16px 全角）相对。
     size_t glyph_offset = static_cast<size_t>(ch) * 16;
     if (glyph_offset + 16 > asc16_.size()) return;
 
@@ -112,15 +115,13 @@ void FontRenderer::render_ascii_glyph(uint8_t* dst, int32_t dst_w,
         uint8_t bits = glyph[row];
         for (int col = 0; col < 8; ++col) {
             if (bits & (0x80 >> col)) {
-                for (int dx = 0; dx < 2; ++dx) {
-                    int32_t px = gx + col * 2 + dx;
-                    int32_t py = gy + row;
-                    size_t idx = (static_cast<size_t>(py) * dst_w + px) * 4;
-                    dst[idx + 0] = r;
-                    dst[idx + 1] = g;
-                    dst[idx + 2] = b;
-                    dst[idx + 3] = 255;
-                }
+                int32_t px = gx + col;
+                int32_t py = gy + row;
+                size_t idx = (static_cast<size_t>(py) * dst_w + px) * 4;
+                dst[idx + 0] = r;
+                dst[idx + 1] = g;
+                dst[idx + 2] = b;
+                dst[idx + 3] = 255;
             }
         }
     }
@@ -138,14 +139,28 @@ void FontRenderer::render_text_to_buffer(uint8_t* buffer, int32_t buf_w,
 
         if (byte < 0x80) {
             if (byte >= 0x20) {
+                // ASCII 半角 8px；仅当当前行确实放不下该字符（且不在行首）
+                // 才换行。证据 FUN_004056ab.c：uVar1 += 8（半角）/ += 0x10（全角）。
+                // 注意：换行判定必须用字符实际宽度，不能用全角 CHAR_WIDTH，
+                // 否则以 8px 半角结尾的字符串会被误判为"放不下"而提前换行，
+                // 把尾字符画到第 2 行(row 16+)，越界写穿单行 16 行高的缓冲。
+                if (cx + ASCII_WIDTH > buf_w && cx > 0) {
+                    cx = 0;
+                    cy += CHAR_HEIGHT;
+                }
                 render_ascii_glyph(buffer, buf_w, cx, cy, byte, r, g, b);
             }
-            cx += CHAR_WIDTH;
+            cx += ASCII_WIDTH;
             ++i;
         } else if (i + 1 < text.size()) {
             uint8_t hi = byte;
             uint8_t lo = static_cast<uint8_t>(text[i + 1]);
 
+            // 全角 16px；同理仅当放不下才换行（且不在行首）。
+            if (cx + CHAR_WIDTH > buf_w && cx > 0) {
+                cx = 0;
+                cy += CHAR_HEIGHT;
+            }
             size_t offset = 0;
             if (lookup_gbk_glyph(hi, lo, offset)) {
                 render_glyph_16x16(buffer, buf_w, cx, cy,
@@ -155,11 +170,6 @@ void FontRenderer::render_text_to_buffer(uint8_t* buffer, int32_t buf_w,
             i += 2;
         } else {
             ++i;
-        }
-
-        if (cx + CHAR_WIDTH > buf_w) {
-            cx = 0;
-            cy += CHAR_HEIGHT;
         }
     }
 }
@@ -215,7 +225,7 @@ void FontRenderer::draw_text_wrapped(int32_t x, int32_t y, int32_t max_width,
             uint8_t byte = static_cast<uint8_t>(text[i]);
             if (byte < 0x80) {
                 if (byte == '\n') { i++; break; }
-                cx += CHAR_WIDTH;
+                cx += ASCII_WIDTH;   // 半角 8px。证据 FUN_004056ab.c。
                 ++i;
             } else {
                 cx += CHAR_WIDTH;
@@ -254,7 +264,7 @@ void FontRenderer::measure_text(std::string_view text,
     while (i < text.size()) {
         uint8_t byte = static_cast<uint8_t>(text[i]);
         if (byte < 0x80) {
-            cx += CHAR_WIDTH;
+            cx += ASCII_WIDTH;   // 半角 8px。证据 FUN_004056ab.c。
             ++i;
         } else {
             cx += CHAR_WIDTH;

@@ -1,8 +1,74 @@
 #include "presentation/opening/opening_renderer.hpp"
 
-#include <algorithm>
+#include "heartbeat.hpp"
 
 namespace dlzr::presentation {
+
+// ---------------------------------------------------------------------------
+// 开场幻灯片 — 全部结论来自反编译指令流，无一处推断。
+//
+// 证据 1: output/ghidra_all/FUN_0042e0f1.c
+//   - FUN_0043c49f(0x2e) + FUN_0043c731(): 选轨并播放 BGM（0x2e 是音轨号，
+//     FUN_0040696e 里是 mciSendCommandA MCI_PLAY —— 前人误读为"载入对话"已纠）；
+//   - FUN_00426059(s_npic25_img,...) 读入 NPIC25.IMG（实测 609x275）；
+//   - FUN_00422627(0,0,0x280,0x1e0,底色) 铺满 640x480；
+//   - FUN_00422889((640-w)/2,(480-h)/2,w,h,...) 居中贴图；
+//   - 模态 GetMessageA 循环：WM_TIMER(0x113) → DAT_007d0cf4++ →
+//     FUN_0042dc9e(DAT_007d0cf4)；WM_LBUTTONDOWN(0x201) → 退出循环。
+//
+// 证据 2: output/ghidra_all/FUN_0042dc9e.c —— WM_TIMER 计数器各阈值换图：
+//     0x113(275)→918-2   0x226(550)→918-3   0x352(850)→77-1
+//     0x5aa(1450)→77-2   0x753(1875)→NPIC18 2000→NPIC19
+//     0x84d(2125)→NPIC20 0x8ca(2250)→NPIC21 0x947(2375)→NPIC22
+//     0x9c4(2500)→NPIC29 0xb22(2850)→NPIC08 0xbd1(3025)→NPIC07
+//     0xc80(3200)→NPIC06 0xd2f(3375)→NPIC05 0xdde(3550)→NPIC04
+//     0xe8d(3725)→NPIC03 0xf3c(3900)→NPIC02 0xfeb(4075)→NPIC01
+//   （Ghidra 标签 s_918_2_img 等中的 '_' 对应实际文件名中的 '-'，
+//    磁盘实测: DLZFULL/918-2.IMG / 918-3.IMG / 77-1.IMG / 77-2.IMG）
+//
+// 证据 3: output/ghidra_all/FUN_004249a2.c:12
+//   SetTimer(DAT_007db4ec, 1, 0x37, NULL) —— 定时器间隔 0x37 = 55ms。
+//   故各屏时长 = (下一阈值 - 本阈值) * 55ms。
+//
+// 证据 4（原版实截图 ground truth）: screen/walk19/w19_slide_001.png
+//   —— 黑底 + 居中历史照片，无任何文字，与上述 RE 一致。
+//   旧日记"幻灯片仅单屏 NPIC25"结论错误，已按 FUN_0042dc9e 指令流纠正。
+//
+// 整个幻灯片**没有任何文字叠加**（FUN_0042dc9e 只换图不画字）；
+// 旧版自拟的叙事文字与"（点击鼠标继续）"提示均属虚构，已删除。
+// ---------------------------------------------------------------------------
+
+// 定时器节拍（FUN_004249a2: 0x37 = 55ms）
+static constexpr uint32_t kTimerTickMs = 55;
+
+struct SlideMark {
+    uint32_t tick;        // FUN_0042dc9e 的计数器阈值
+    const char* image;    // 该阈值换入的图片
+};
+
+// FUN_0042dc9e.c 的阈值表，按先后顺序排列（首屏 NPIC25 在进循环前已画）
+static constexpr SlideMark kSlides[] = {
+    {0,     "NPIC25.IMG"},
+    {275,   "918-2.IMG"},
+    {550,   "918-3.IMG"},
+    {850,   "77-1.IMG"},
+    {1450,  "77-2.IMG"},
+    {1875,  "NPIC18.IMG"},
+    {2000,  "NPIC19.IMG"},
+    {2125,  "NPIC20.IMG"},
+    {2250,  "NPIC21.IMG"},
+    {2375,  "NPIC22.IMG"},
+    {2500,  "NPIC29.IMG"},
+    {2850,  "NPIC08.IMG"},
+    {3025,  "NPIC07.IMG"},
+    {3200,  "NPIC06.IMG"},
+    {3375,  "NPIC05.IMG"},
+    {3550,  "NPIC04.IMG"},
+    {3725,  "NPIC03.IMG"},
+    {3900,  "NPIC02.IMG"},
+    {4075,  "NPIC01.IMG"},   // 末屏：无下一阈值，等待左键结束
+};
+static constexpr int kSlideCount = static_cast<int>(sizeof(kSlides) / sizeof(kSlides[0]));
 
 void OpeningRenderer::init(platform::Platform& platform, FontRenderer& font, ImageCache& images) {
     platform_ = &platform;
@@ -11,68 +77,30 @@ void OpeningRenderer::init(platform::Platform& platform, FontRenderer& font, Ima
 }
 
 void OpeningRenderer::start(const logic::GameStateManager& gsm) {
+    (void)gsm;
     scenes_.clear();
     current_scene_ = 0;
     scene_timer_ = 0;
     playing_ = true;
     finished_ = false;
-    fade_alpha_ = 0;
-    fading_in_ = true;
-    fading_out_ = false;
     requested_bg_ = -1;
 
     build_sequence(gsm);
 }
 
 void OpeningRenderer::build_sequence(const logic::GameStateManager& gsm) {
-    scenes_.push_back({"\xBF\xB9\xC8\xD5\xD6\xAE\xB5\xD8\xC0\xD7\xD5\xBD",
-                       0, 3000, 800, 600, -1, true, 180});
-
-    scenes_.push_back({"\xD2\xBB\xBE\xC5\xCB\xC4\xC4\xC4\xEA\xA3\xAC\xC8\xD5\xBF\xDB\xC7\xC0\xB8\xBA\xBB\xAA\xB1\xB1\xA1\xa3"
-                       "\xD6\xD0\xB9\xFA\xB9\xb2\xb2\xB5\xB3\xC1\xEC\xB5\xBC\xCF\xC2\xA3\xAC"
-                       "\xBF\xB9\xC8\xD5\xCE\xe4\xd7\xb0\xb6\xd3\xD4\xDA\xBB\xAA\xB1\xB1\xB5\xD8\xC7\xF8\xD5\xB9\xBF\xAA\xA3\xAC"
-                       "\xB7\xA2\xB6\xAF\xC8\xBA\xD6\xDA\xA3\xAC\xBF\xAA\xD5\xB9\xB5\xD8\xC0\xD7\xD5\xBD\xA1\xa3",
-                       2, 6000, 600, 400, -1, true, 160});
-
-    scenes_.push_back({"\xC4\xE3\xBD\xAB\xD6\xB8\xBB\xD3\xBF\xB9\xC8\xD5\xCE\xe4\xd7\xb0\xb6\xd3\xA3\xAC"
-                       "\xD4\xCB\xD3\xC3\xB5\xD8\xC0\xD7\xD3\xEB\xC8\xD5\xBE\xFC\xD6\xDC\xD0\xFD\xA3\xAC"
-                       "\xB1\xA3\xCE\xC0\xCF\xE7\xC0\xEF\xB5\xC4\xB8\xB8\xC0\xCF\xCF\xE7\xC7\xD7\xA1\xa3",
-                       3, 5000, 600, 400, -1, true, 200});
-
-    if (gsm.game_data().current_fight_index == 0) {
-        scenes_.push_back({"\xB5\xDA\xD2\xBB\xB9\xD8\xA3\xBA\xB1\xA3\xCE\xC0\xD7\xAF\xD4\xB0"
-                           "\xA1\xa3\xCF\xFB\xC3\xF0\xC8\xEB\xC7\xD6\xB5\xC4\xC8\xD5\xBE\xFC\xA3\xA1",
-                           1, 4000, 500, 400, -1, true, 220});
-    } else {
-        scenes_.push_back({"\xBC\xCC\xD0\xF8\xD5\xBD\xB6\xB7\xA3\xA1"
-                           "\xC4\xE3\xD2\xD1\xBE\xAD\xCD\xEA\xB3\xC9\xC1\xCB\xB9\xD8\xBF\xA8\xA1\xa3",
-                           1, 3000, 500, 400, -1, true, 220});
+    (void)gsm;
+    for (int i = 0; i < kSlideCount; ++i) {
+        OpeningScene scene;
+        scene.image = kSlides[i].image;
+        if (i + 1 < kSlideCount) {
+            scene.duration_ms =
+                static_cast<int32_t>((kSlides[i + 1].tick - kSlides[i].tick) * kTimerTickMs);
+        } else {
+            scene.duration_ms = 0;   // 末屏等待左键（原版仅 0x201 结束）
+        }
+        scenes_.push_back(std::move(scene));
     }
-
-    scenes_.push_back({"\xB0\xB4\xC8\xCE\xD2\xE2\xBC\xFC\xBF\xAA\xCA\xBC\xD3\xCE\xCF\xB7"
-                       "\xA1\xa3",
-                       0, 0, 300, 200, -1, true, 400});
-}
-
-int32_t OpeningRenderer::compute_fade_alpha() const {
-    if (current_scene_ >= scenes_.size()) return 0;
-    const auto& scene = scenes_[current_scene_];
-
-    if (fading_in_) {
-        if (scene.fade_in_ms <= 0) return 255;
-        float t = static_cast<float>(scene_timer_) / static_cast<float>(scene.fade_in_ms);
-        if (t > 1.0f) t = 1.0f;
-        return static_cast<int32_t>(255.0f * t);
-    }
-    if (fading_out_) {
-        int32_t remaining = scene.duration_ms - static_cast<int32_t>(scene_timer_);
-        if (remaining < 0) remaining = 0;
-        if (scene.fade_out_ms <= 0) return (remaining > 0) ? 255 : 0;
-        float t = static_cast<float>(remaining) / static_cast<float>(scene.fade_out_ms);
-        if (t > 1.0f) t = 1.0f;
-        return static_cast<int32_t>(255.0f * t);
-    }
-    return 255;
 }
 
 bool OpeningRenderer::update(uint32_t delta_ms) {
@@ -86,19 +114,10 @@ bool OpeningRenderer::update(uint32_t delta_ms) {
     scene_timer_ += delta_ms;
     const auto& scene = scenes_[current_scene_];
 
-    if (fading_in_ && scene.fade_in_ms > 0 &&
-        scene_timer_ >= static_cast<uint32_t>(scene.fade_in_ms)) {
-        fading_in_ = false;
-    }
-
-    if (scene.duration_ms > 0 && !fading_in_) {
-        int32_t fade_start = scene.duration_ms - scene.fade_out_ms;
-        if (fade_start < 0) fade_start = 0;
-        if (static_cast<int32_t>(scene_timer_) >= scene.duration_ms) {
-            advance_scene();
-        } else if (static_cast<int32_t>(scene_timer_) >= fade_start && !fading_out_) {
-            fading_out_ = true;
-        }
+    // 原版靠 WM_TIMER(0x113) 自增计数器推进换图；这里按各屏时长翻页。
+    if (scene.duration_ms > 0 &&
+        scene_timer_ >= static_cast<uint32_t>(scene.duration_ms)) {
+        advance_scene();
     }
 
     return finished_;
@@ -107,52 +126,27 @@ bool OpeningRenderer::update(uint32_t delta_ms) {
 void OpeningRenderer::render() {
     if (!playing_ || finished_ || current_scene_ >= scenes_.size()) return;
 
+    // 原版 FUN_0042e0f1 的绘制流程（RE 实锤）：
+    //   1) FUN_00422627(0,0,0x280,0x1e0,底色)       —— 先用底色铺满 640x480
+    //   2) FUN_00422889((0x280-w)/2,(0x1e0-h)/2,w,h) —— 再把当前图**居中**贴上
+    // 每屏宽度不同，按各自 w/h 居中（数据驱动，走 ImageCache 实测尺寸）。
+    platform_->fill_rect(0, 0, 640, 480, 0, 0, 0);
+
     const auto& scene = scenes_[current_scene_];
-    int32_t alpha = compute_fade_alpha();
-
-    if (scene.background_img >= 0) {
-        char img_name[16];
-        if (scene.background_img == 0) {
-            std::snprintf(img_name, sizeof(img_name), "DLZ00.IMG");
-        } else {
-            std::snprintf(img_name, sizeof(img_name), "BG0%d.IMG", scene.background_img);
-        }
-        images_->draw_image(img_name, 0, 0);
-    } else {
-        platform_->fill_rect(0, 0, 640, 480, 0, 0, 0);
-    }
-
-    if (alpha < 255) {
-        int32_t overlay = 255 - alpha;
-        platform_->fill_rect(0, 0, 640, 480,
-                             static_cast<uint8_t>(overlay),
-                             static_cast<uint8_t>(overlay),
-                             static_cast<uint8_t>(overlay));
-    }
-
-    if (!scene.text.empty() && alpha > 30) {
-        uint8_t cr = static_cast<uint8_t>(std::min(255, 255 * alpha / 255));
-        uint8_t cg = static_cast<uint8_t>(std::min(255, 255 * alpha / 255));
-        uint8_t cb = static_cast<uint8_t>(std::min(255, 255 * alpha / 255));
-
-        if (scene.text_shadow) {
-            font_->draw_text(42, scene.text_y + 2, scene.text, 0, 0, 0);
-        }
-        font_->draw_text(40, scene.text_y, scene.text, cr, cg, cb);
-    }
-
-    if (current_scene_ == scenes_.size() - 1 && scenes_.back().duration_ms == 0) {
-        uint8_t ha = static_cast<uint8_t>(180 * alpha / 255);
-        font_->draw_text(200, 440, "\xa3\xa8\xb0\xb4\xc8\xce\xd2\xe2\xbc\xfc\xbc\xcc\xd0\xf8\xa3\xa9",
-                         ha, ha, ha);
-    }
+    dlzr::hb_step(scene.image.c_str());
+    int32_t iw = images_->image_width(scene.image);
+    int32_t ih = images_->image_height(scene.image);
+    images_->draw_image(scene.image, (640 - iw) / 2, (480 - ih) / 2);
 }
 
 bool OpeningRenderer::process_input(const platform::Event& event) {
     if (!playing_ || finished_) return false;
 
-    if (event.type == platform::Event::Type::KeyDown ||
-        (event.type == platform::Event::Type::MouseDown && event.mouse_button == 1)) {
+    // 原版 FUN_0042e0f1 是模态循环，**结束条件只有 WM_LBUTTONDOWN(0x201)**，
+    // 完全不响应键盘消息（换图走 WM_TIMER 0x113）。
+    // 早期"任意键快进"会把 PrintScreen 等系统键当成翻页键吞掉，玩家无法截图。
+    // 这里对齐原版：只认鼠标左键，键盘一律不处理。
+    if (event.type == platform::Event::Type::MouseDown && event.mouse_button == 1) {
         advance_scene();
         return true;
     }
@@ -163,8 +157,6 @@ bool OpeningRenderer::process_input(const platform::Event& event) {
 void OpeningRenderer::advance_scene() {
     ++current_scene_;
     scene_timer_ = 0;
-    fading_in_ = true;
-    fading_out_ = false;
 
     if (current_scene_ >= scenes_.size()) {
         finished_ = true;

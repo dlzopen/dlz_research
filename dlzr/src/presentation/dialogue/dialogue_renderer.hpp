@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/platform.hpp"
+#include "core/data_model/palette.hpp"
 #include "presentation/font/font_renderer.hpp"
 #include "presentation/image/image_cache.hpp"
 
@@ -9,44 +10,39 @@
 
 namespace dlzr::presentation {
 
-// 头像表情 / Face expression
-enum class FaceExpression {
-    NEUTRAL,
-    HAPPY,
-    ANGRY,
-    SAD,
-    SURPRISED,
-};
-
 class DialogueRenderer {
 public:
     void init(platform::Platform& platform, FontRenderer& font,
-              ImageCache& images);
+              ImageCache& images, const std::string& game_data_dir);
 
     void render(const std::string& speaker_name,
                 const std::string& text,
                 int32_t visible_chars,
                 const uint8_t* face_rgba = nullptr);
 
-    // 更新动画状态 / Update animation state (call each frame)
-    void update_animation(int32_t delta_ms, bool text_is_scrolling);
+    // ---- 对话框版面（RE 实证，640x480 坐标系）----
+    // 证据 FUN_0043d82f.c / FUN_0043cfe1.c：
+    //   面板图 FRAME00.TGA 404x127 贴于 (0x76,0x128)=(118,296)（:35-38）
+    //   头像 80x100 @ (0x82,0x134)=(130,308)（:41 FUN_00422f68）
+    //   文本起点 (0x8e+(有头像?0x50:0), 0x138) = 有头像(222,312)/无头像(142,312)（:26-31,96）
+    //   5 行 x 20px 行高（:82-84 local_15c*0x14）
+    //   每行 18 全角字(有头像, DAT_0098d814=0x24, FUN_0043dd47.c:14)
+    //          / 23 全角字(无头像, 0x2e, FUN_0043d56b.c:21)
+    //   面板素材 = FRAME00.TGA（FUN_00424847.c:14 FUN_00426202(s_frame00_tga,...,0x194,0x7f)），
+    //   用文件内嵌调色板（与 kOriginalPalette 不同，实测 60 个用色全部不同）；
+    //   索引 0 = 透明色键（FUN_00422a78 param_6=0）。
+    static constexpr int32_t PANEL_X = 118;   // 0x76
+    static constexpr int32_t PANEL_Y = 296;   // 0x128
+    static constexpr int32_t PANEL_W = 404;   // 0x194
+    static constexpr int32_t PANEL_H = 127;   // 0x7f
+    static constexpr int32_t TEXT_Y = 312;    // 0x138
+    static constexpr int32_t LINE_HEIGHT = 20;      // 0x14
+    static constexpr int32_t LINES_PER_PAGE = 5;
+    static constexpr int32_t CHARS_PER_LINE_FACE = 18;   // 有头像
+    static constexpr int32_t CHARS_PER_LINE_NOFACE = 23; // 无头像
 
-    // 设置表情 / Set expression
-    void set_expression(FaceExpression expr) { expression_ = expr; }
-
-    // 获取当前头像帧（含动画） / Get current face frame with animation applied
-    // Returns modified RGBA buffer with blink/expression applied
-    const uint8_t* get_animated_face(const uint8_t* base_face_rgba);
-
-    static constexpr int32_t BOX_X = 32;
-    static constexpr int32_t BOX_Y = 360;
-    static constexpr int32_t BOX_W = 576;
-    static constexpr int32_t BOX_H = 100;
-    static constexpr int32_t TEXT_X = BOX_X + 16;
-    static constexpr int32_t TEXT_Y = BOX_Y + 32;
-
-    static constexpr int32_t FACE_X = 4;
-    static constexpr int32_t FACE_Y = 340;
+    static constexpr int32_t FACE_X = 130;    // 0x82
+    static constexpr int32_t FACE_Y = 308;    // 0x134
     static constexpr int32_t FACE_W = 80;
     static constexpr int32_t FACE_H = 100;
 
@@ -56,23 +52,9 @@ private:
     ImageCache* images_{nullptr};
 
     platform::TextureHandle face_texture_{0};
-
-    // 动画状态 / Animation state
-    int32_t blink_timer_{0};           // 眨眼计时器 / Blink timer (ms)
-    bool eyes_closed_{false};          // 眼睛是否闭合 / Are eyes closed
-    int32_t mouth_frame_{0};           // 嘴部动画帧 / Mouth animation frame (0-2)
-    FaceExpression expression_{FaceExpression::NEUTRAL};
-
-    // 动画缓冲 / Animation buffer
-    std::array<uint8_t, FACE_W * FACE_H * 4> animated_face_{};
-
-    static constexpr int32_t BLINK_INTERVAL = 3000;  // 每3秒眨眼 / Blink every 3s
-    static constexpr int32_t BLINK_DURATION = 150;   // 眨眼持续150ms / Blink lasts 150ms
+    platform::TextureHandle panel_texture_{0};   // FRAME00.TGA 面板（索引0透明）
 
     void draw_face(const uint8_t* face_rgba);
-    void apply_blink(uint8_t* rgba);
-    void apply_expression(uint8_t* rgba);
-    void apply_mouth(uint8_t* rgba, int32_t frame);
 };
 
 }  // namespace dlzr::presentation

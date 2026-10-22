@@ -13,26 +13,53 @@
 
 namespace dlzr::logic {
 
+// 游戏模式枚举 — 对应原始游戏 DAT_007db4e8 的值
+// 详见 docs/GUI_MODE_MAP.md
 enum class GameMode {
-    TITLE,
-    CHARACTER_SELECT,
-    INIT,
-    STRATEGIC_MAP,
-    TOWN,
-    SHOP,
-    EQUIPMENT,
-    WAREHOUSE,
-    SAVE_LOAD,
-    FORGING,
-    PROMOTION,
-    LEVEL_SELECT,
-    BATTLE_INTRO,
-    BATTLE,
-    BATTLE_RESULT,
-    DIALOGUE,
-    CUTSCENE,
-    ENDING,
-    HIDDEN_LEVEL_CHOICE,
+    // 标题画面 (original modes 0-3)
+    TITLE_ANIMATION,      // Mode 0: FLC 开场动画
+    TITLE,                // Mode 1: 标题菜单 (5个按钮)
+    TITLE_RANKING,        // Mode 2: 战斗英雄排行
+    TITLE_REST,           // Mode 3: 部队休整
+
+    // 角色选择 (original mode 4)
+    CHARACTER_SELECT,     // Mode 4: 角色选择/战前准备
+
+    // 过渡/结算 (original modes 5-7)
+    CONTINUE_GAME,        // Mode 5: 继续游戏/读档过渡
+    VICTORY_ANIMATION,    // Mode 6: 胜利动画滚动
+    LEVEL_SELECT,         // Mode 7: 关卡选择/密码输入
+
+    // 城镇菜单 (original modes 50-58)
+    TOWN,                 // Mode 50: 城镇中心 (6按钮枢纽)
+    ARMY_INFO,            // Mode 51: 军队信息
+    SHOP,                 // Mode 52: 物资装备/商店
+    RECRUIT,              // Mode 53: 招募
+    FORGING,              // Mode 54: 锻造
+    SAVE_LOAD,            // Mode 55: 存档/读档
+    RECRUIT_DETAIL,       // Mode 56: 招募详细
+    MINE_PLACEMENT,       // Mode 57: 布雷
+    CONFIRM_DIALOG,       // Mode 58: 确认对话框
+
+    // 战略/战斗 (original modes 100, 120, 150)
+    INIT,                 // Mode 100: 初始化过渡 → 战略地图
+    STRATEGIC_MAP,        // Mode 150: 战略地图/战斗
+    BATTLE,               // Mode 150 子模式: 战斗中
+
+    // 元模式 (original mode 999)
+    RESET,                // Mode 999: 重置到标题
+
+    // 其他系统
+    BATTLE_INTRO,         // 战斗开场动画
+    BATTLE_RESULT,        // 战斗结算
+    DIALOGUE,             // 对话系统
+    CUTSCENE,             // 过场动画
+    ENDING,               // 结局画面
+    OPENING,              // 开场剧情
+    PROMOTION,            // 晋升系统
+    EQUIPMENT,            // 装备管理
+    WAREHOUSE,            // 仓库管理
+    HIDDEN_LEVEL_CHOICE,  // 隐藏关卡选择
 };
 
 class GameStateManager {
@@ -52,6 +79,17 @@ public:
 
     int32_t selected_fight() const { return selected_fight_; }
     void set_selected_fight(int32_t fight) { selected_fight_ = fight; }
+
+    // 关卡选择界面的返回目标 / Level-select return target
+    // 从人物选择(新游戏)进入 → 返回 CHARACTER_SELECT；从城镇进入 → 返回 TOWN
+    // ENTERED from new-game character select → return to CHARACTER_SELECT;
+    // entered from a town → return to TOWN
+    GameMode level_select_return_mode() const {
+        return static_cast<GameMode>(level_select_return_mode_);
+    }
+    void set_level_select_return_mode(GameMode mode) {
+        level_select_return_mode_ = static_cast<int32_t>(mode);
+    }
 
     int32_t current_shop_type() const { return current_shop_type_; }
     void set_current_shop_type(int32_t type) { current_shop_type_ = type; }
@@ -113,12 +151,13 @@ public:
     void set_difficulty_level(int32_t level) { difficulty_level_ = level; }
 
 private:
-    GameMode mode_{GameMode::INIT};
+    GameMode mode_{GameMode::TITLE};
     core::GameData game_data_;
     const app::DatLoader* loader_{nullptr};
 
     int32_t selected_town_{0};
     int32_t selected_fight_{0};
+    int32_t level_select_return_mode_{static_cast<int32_t>(GameMode::TOWN)};
     int32_t current_shop_type_{0};
     int32_t save_load_mode_{0};  // 0=save, 1=load
     int32_t selected_equipment_char_{0};

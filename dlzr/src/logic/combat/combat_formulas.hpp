@@ -10,6 +10,7 @@
 
 #include "core/data_model/types.hpp"
 #include "core/data_model/constants.hpp"
+#include "core/data_model/game_data.hpp"
 
 #include <cstdint>
 
@@ -104,5 +105,18 @@ int32_t calc_experience(int32_t killer_level,
 // min damage = 1
 // ============================================================
 int32_t calc_damage(int32_t attack_power, int32_t defense);
+
+// ============================================================
+// 装备攻防加成查询 / Equipped item attack/defense bonus lookup
+// RE: 0x0042B042 (get_item_attack_bonus) / 0x0042B0EA (get_item_defense_bonus)
+//
+// 扫描人物 8 个物品栏位，找出与当前兵种兼容且加成最高的装备。
+// 仅物品 ID > 0x51（即 item_idx = ID-1 > 0x50）的才算装备；
+// 再通过 battle_config_3 兼容性矩阵（wupin_compat[item_idx][class_type] != 0）过滤。
+// 攻击加成 = WuPin[item_idx].para3，防御加成 = WuPin[item_idx].para4
+// （运行时 goods 表基址 0x578D18 = WuPin 数组，攻防字段分别在 +0x28/+0x2C）。
+// ============================================================
+int32_t get_item_attack_bonus(const core::People& person, const core::GameData& gd);
+int32_t get_item_defense_bonus(const core::People& person, const core::GameData& gd);
 
 }  // namespace dlzr::logic

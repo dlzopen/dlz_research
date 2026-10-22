@@ -50,6 +50,8 @@ private:
     int32_t grid_origin_x_{0};
     int32_t grid_origin_y_{0};
     int32_t cell_size_{0};
+    int32_t cam_x_{0};   // 视口相机左上角瓦片坐标（与渲染器共用，保证"点哪=画哪"）
+    int32_t cam_y_{0};
 
     int32_t menu_x_{0};
     int32_t menu_y_{0};

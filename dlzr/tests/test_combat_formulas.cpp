@@ -527,3 +527,106 @@ TEST(CombatFormulas, Damage_HighAttack) {
 TEST(CombatFormulas, Damage_ZeroDefense) {
     EXPECT_EQ(calc_damage(50, 0), 50);
 }
+
+// ============================================================
+// 装备攻防加成测试 / Equipped item attack/defense bonus tests
+// RE: 0x0042B042 / 0x0042B0EA
+// ============================================================
+namespace {
+GameData make_gd_with_item(int32_t item_idx, int32_t cls, int32_t para3, int32_t para4) {
+    GameData gd;
+    if (item_idx >= 0 && item_idx < MAX_WUPIN) {
+        gd.items[item_idx].para3 = para3;   // 攻击加成
+        gd.items[item_idx].para4 = para4;   // 防御加成
+    }
+    if (cls >= 0 && cls < MAX_CLASS_TYPES) {
+        gd.wupin_compat[item_idx][cls] = 1;  // 兵种-物品兼容
+    }
+    return gd;
+}
+}  // namespace
+
+TEST(CombatFormulas, ItemBonus_NoItems) {
+    auto p = make_person(50, 50, 5, 0);
+    auto gd = make_gd_with_item(90, 0, 30, 20);
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 0);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 0);
+}
+
+TEST(CombatFormulas, ItemBonus_EmptyInventory) {
+    auto p = make_person(50, 50, 5, 0);
+    for (auto& it : p.items) it = 0;
+    auto gd = make_gd_with_item(90, 0, 30, 20);
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 0);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 0);
+}
+
+TEST(CombatFormulas, ItemBonus_EquipmentCounts) {
+    // item_id = 90 → idx = 89 (> 0x50), 兼容兵种 0, para3=35, para4=22
+    auto p = make_person(50, 50, 5, 0);
+    p.items[0] = 90;
+    auto gd = make_gd_with_item(89, 0, 35, 22);
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 35);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 22);
+}
+
+TEST(CombatFormulas, ItemBonus_ConsumableIgnored) {
+    // item_id = 50 → idx = 49 (<= 0x50), 即使兼容也不计入装备加成
+    auto p = make_person(50, 50, 5, 0);
+    p.items[0] = 50;
+    auto gd = make_gd_with_item(49, 0, 99, 99);
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 0);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 0);
+}
+
+TEST(CombatFormulas, ItemBonus_IncompatibleClass) {
+    // 装备 idx=89 仅对兵种 1 兼容，对兵种 0 不兼容
+    auto p = make_person(50, 50, 5, 0);
+    p.items[0] = 90;
+    auto gd = make_gd_with_item(89, 1, 35, 22);  // 兼容兵种 1，非 0
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 0);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 0);
+}
+
+TEST(CombatFormulas, ItemBonus_BestOfMultiple) {
+    // 三个兼容装备，取最大值
+    auto p = make_person(50, 50, 5, 3);
+    p.items[0] = 90;   // idx 89
+    p.items[1] = 100;  // idx 99
+    p.items[2] = 110;  // idx 109
+    GameData gd;
+    gd.items[89].para3 = 10;  gd.items[89].para4 = 5;
+    gd.items[99].para3 = 40;  gd.items[99].para4 = 12;
+    gd.items[109].para3 = 25; gd.items[109].para4 = 30;
+    gd.wupin_compat[89][3] = 1;
+    gd.wupin_compat[99][3] = 1;
+    gd.wupin_compat[109][3] = 1;
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 40);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 30);
+}
+
+TEST(CombatFormulas, ItemBonus_MaxOfCompatibleOnly) {
+    // 装备 90 兼容、装备 100 不兼容，应只取 90
+    auto p = make_person(50, 50, 5, 7);
+    p.items[0] = 90;   // idx 89
+    p.items[1] = 100;  // idx 99 (不兼容)
+    GameData gd;
+    gd.items[89].para3 = 15;  gd.items[89].para4 = 9;
+    gd.items[99].para3 = 80;  gd.items[99].para4 = 80;
+    gd.wupin_compat[89][7] = 1;
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 15);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 9);
+}
+
+TEST(CombatFormulas, ItemBonus_SlotRange) {
+    // 验证扫描全部 8 个栏位
+    auto p = make_person(50, 50, 5, 2);
+    for (auto& it : p.items) it = 0;
+    p.items[7] = 120;  // 最后一个栏位，idx 119
+    GameData gd;
+    gd.items[119].para3 = 60; gd.items[119].para4 = 33;
+    gd.wupin_compat[119][2] = 1;
+    EXPECT_EQ(get_item_attack_bonus(p, gd), 60);
+    EXPECT_EQ(get_item_defense_bonus(p, gd), 33);
+}
+

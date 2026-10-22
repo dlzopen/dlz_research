@@ -44,22 +44,32 @@ bool Sdl3Platform::init(const PlatformConfig& config) {
     }
 
     // 渲染器标志 / Renderer flags
-    const char* renderer_name = nullptr;
     if (config.vsync) {
         SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
     }
 
-    renderer_ = SDL_CreateRenderer(window_, renderer_name);
+    // 使用 SDL 默认渲染后端（D3D11 / OpenGL / Metal 等由 SDL 按平台选择）。
+    // 注：此前曾强制 software 渲染以"绕开 Intel D3D11 驱动崩溃"，但经逆向定位，
+    // 那些崩溃实为字体渲染换行逻辑越界写穿堆缓冲（见 font_renderer.cpp
+    // render_text_to_buffer）导致的堆损坏，与驱动无关。此处还原默认后端。
+    renderer_ = SDL_CreateRenderer(window_, nullptr);
     if (!renderer_) {
         std::fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
         return false;
     }
+    std::fprintf(stderr, "[Platform] Active renderer: %s\n",
+                 SDL_GetRendererName(renderer_) ? SDL_GetRendererName(renderer_) : "(unknown)");
 
     // 设置逻辑尺寸 / Set logical size for scaling
     SDL_SetRenderLogicalPresentation(renderer_, config.width, config.height,
                                      SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
 
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    // Debug: check actual drawable size
+    int dw, dh;
+    SDL_GetWindowSizeInPixels(window_, &dw, &dh);
+    std::fprintf(stderr, "[DEBUG] Window client size: %dx%d\n", dw, dh);
 
     SDL_AudioSpec spec{SDL_AUDIO_S16LE, 1, 22050};
     audio_device_ = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
@@ -80,6 +90,14 @@ void Sdl3Platform::shutdown() {
         }
     }
     textures_.clear();
+
+    for (auto& bucket : deferred_destroy_) {
+        for (SDL_Texture* t : bucket) {
+            if (t) SDL_DestroyTexture(t);
+        }
+        bucket.clear();
+    }
+    destroy_gen_ = 0;
 
     for (auto& [handle, sound] : sounds_) {
         if (sound.stream) {
@@ -115,6 +133,15 @@ void Sdl3Platform::shutdown() {
     SDL_Quit();
 }
 
+// 系统保留键：这些键属于 OS（截图/滚动锁定/暂停），不得转发给游戏逻辑。
+// 否则任何"任意键继续/快进"处理器都会把它们当成操作键吞掉，
+// 典型症状：按 PrintScreen 想截图，却把开场幻灯片翻到了下一页。
+static bool is_system_reserved_key(SDL_Keycode key) {
+    return key == SDLK_PRINTSCREEN ||
+           key == SDLK_SCROLLLOCK ||
+           key == SDLK_PAUSE;
+}
+
 bool Sdl3Platform::poll_event(Event& out_event) {
     SDL_Event sdl_event;
     while (SDL_PollEvent(&sdl_event)) {
@@ -123,26 +150,36 @@ bool Sdl3Platform::poll_event(Event& out_event) {
                 out_event.type = Event::Type::Quit;
                 return true;
             case SDL_EVENT_KEY_DOWN:
+                // 吞掉系统保留键，继续取下一个事件（不生成 KeyDown）
+                if (is_system_reserved_key(sdl_event.key.key)) {
+                    break;
+                }
                 out_event.type = Event::Type::KeyDown;
                 out_event.key = static_cast<int32_t>(sdl_event.key.key);
                 return true;
             case SDL_EVENT_KEY_UP:
+                if (is_system_reserved_key(sdl_event.key.key)) {
+                    break;
+                }
                 out_event.type = Event::Type::KeyUp;
                 out_event.key = static_cast<int32_t>(sdl_event.key.key);
                 return true;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN: {
                 out_event.type = Event::Type::MouseDown;
                 out_event.mouse_x = static_cast<int32_t>(sdl_event.button.x);
                 out_event.mouse_y = static_cast<int32_t>(sdl_event.button.y);
                 out_event.mouse_button = sdl_event.button.button;
                 return true;
+            }
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                SDL_ConvertEventToRenderCoordinates(renderer_, &sdl_event);
                 out_event.type = Event::Type::MouseUp;
                 out_event.mouse_x = static_cast<int32_t>(sdl_event.button.x);
                 out_event.mouse_y = static_cast<int32_t>(sdl_event.button.y);
                 out_event.mouse_button = sdl_event.button.button;
                 return true;
             case SDL_EVENT_MOUSE_MOTION:
+                SDL_ConvertEventToRenderCoordinates(renderer_, &sdl_event);
                 out_event.type = Event::Type::MouseMove;
                 out_event.mouse_x = static_cast<int32_t>(sdl_event.motion.x);
                 out_event.mouse_y = static_cast<int32_t>(sdl_event.motion.y);
@@ -191,6 +228,13 @@ bool Sdl3Platform::poll_event(Event& out_event) {
                 out_event.gamepad_axis_value = sdl_event.gaxis.value / 32767.0f;
                 return true;
 
+            case SDL_EVENT_TEXT_INPUT:
+                out_event.type = Event::Type::TextInput;
+                std::strncpy(out_event.text, sdl_event.text.text,
+                             sizeof(out_event.text) - 1);
+                out_event.text[sizeof(out_event.text) - 1] = '\0';
+                return true;
+
             default:
                 break;
         }
@@ -206,9 +250,14 @@ void Sdl3Platform::clear(uint8_t r, uint8_t g, uint8_t b) {
 
 void Sdl3Platform::present() {
     SDL_RenderPresent(renderer_);
+    flush_deferred_destroy();
 }
 
 TextureHandle Sdl3Platform::create_texture(int32_t width, int32_t height) {
+    // 用 STREAMING 纹理：本项目所有纹理均为"创建一次 + 上传一次 + 渲染多次"，
+    // STREAMING 允许后续按需 UpdateTexture 且 SDL 会管理 GPU 上传。
+    // （此前曾误改为 STATIC 以规避"Intel D3D11 驱动崩溃"，但经定位那些崩溃
+    // 实为字体堆缓冲越界写穿所致，与纹理访问模式无关，故还原 STREAMING。）
     SDL_Texture* tex = SDL_CreateTexture(
         renderer_, SDL_PIXELFORMAT_ABGR8888,
         SDL_TEXTUREACCESS_STREAMING, width, height);
@@ -268,6 +317,23 @@ void Sdl3Platform::draw_texture_rect(TextureHandle tex_handle,
     SDL_RenderTexture(renderer_, tex, nullptr, &dst);
 }
 
+void Sdl3Platform::draw_texture_sub(TextureHandle tex_handle,
+                                     int32_t src_x, int32_t src_y,
+                                     int32_t src_w, int32_t src_h,
+                                     int32_t dst_x, int32_t dst_y) {
+    auto it = textures_.find(tex_handle);
+    if (it == textures_.end() || !it->second) {
+        return;
+    }
+
+    SDL_Texture* tex = it->second;
+    SDL_FRect src{static_cast<float>(src_x), static_cast<float>(src_y),
+                  static_cast<float>(src_w), static_cast<float>(src_h)};
+    SDL_FRect dst{static_cast<float>(dst_x), static_cast<float>(dst_y),
+                  static_cast<float>(src_w), static_cast<float>(src_h)};
+    SDL_RenderTexture(renderer_, tex, &src, &dst);
+}
+
 void Sdl3Platform::draw_rect(int32_t x, int32_t y, int32_t w, int32_t h,
                               uint8_t r, uint8_t g, uint8_t b) {
     SDL_SetRenderDrawColor(renderer_, r, g, b, 255);
@@ -296,10 +362,22 @@ void Sdl3Platform::destroy_texture(TextureHandle tex_handle) {
     auto it = textures_.find(tex_handle);
     if (it != textures_.end()) {
         if (it->second) {
-            SDL_DestroyTexture(it->second);
+            // 延后释放：推入当前代队列，待 2 帧后的 present 真正销毁。
+            deferred_destroy_[destroy_gen_].push_back(it->second);
         }
         textures_.erase(it);
     }
+}
+
+void Sdl3Platform::flush_deferred_destroy() {
+    // 释放 (destroy_gen_ + 1) % 3 这一代：即 2 帧前请求销毁的纹理。
+    // 此刻对应帧的渲染批次已随此前 present 提交并被 GPU 退役，释放安全。
+    const int free_idx = (destroy_gen_ + 1) % 3;
+    for (SDL_Texture* t : deferred_destroy_[free_idx]) {
+        if (t) SDL_DestroyTexture(t);
+    }
+    deferred_destroy_[free_idx].clear();
+    destroy_gen_ = (destroy_gen_ + 1) % 3;
 }
 
 Platform::AudioHandle Sdl3Platform::play_sound(const uint8_t* pcm_data,
@@ -313,6 +391,12 @@ Platform::AudioHandle Sdl3Platform::play_sound(const uint8_t* pcm_data,
     SDL_AudioStream* stream = SDL_CreateAudioStream(&spec, &spec);
     if (!stream) {
         std::fprintf(stderr, "SDL_CreateAudioStream failed: %s\n", SDL_GetError());
+        return 0;
+    }
+
+    if (!SDL_BindAudioStream(audio_device_, stream)) {
+        std::fprintf(stderr, "SDL_BindAudioStream failed: %s\n", SDL_GetError());
+        SDL_DestroyAudioStream(stream);
         return 0;
     }
 
@@ -413,6 +497,14 @@ void Sdl3Platform::delay_ms(uint32_t ms) {
 
 uint32_t Sdl3Platform::ticks_ms() {
     return SDL_GetTicks();
+}
+
+void Sdl3Platform::start_text_input() {
+    SDL_StartTextInput(window_);
+}
+
+void Sdl3Platform::stop_text_input() {
+    SDL_StopTextInput(window_);
 }
 
 std::unique_ptr<Platform> create_sdl3_platform() {

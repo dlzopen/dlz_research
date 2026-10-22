@@ -4,6 +4,18 @@ namespace dlzr::presentation {
 
 TitleAction TitleInput::process_event(const platform::Event& event,
                                        int32_t& selected_option) {
+    if (event.type == platform::Event::Type::MouseMove) {
+        for (int i = 0; i < 5; ++i) {
+            if (event.mouse_x >= MENU_X &&
+                event.mouse_x <= MENU_X + MENU_WIDTH &&
+                event.mouse_y >= MENU_Y[i] &&
+                event.mouse_y <= MENU_Y[i] + MENU_HEIGHT) {
+                selected_option = i;
+                return TitleAction::NONE;
+            }
+        }
+    }
+
     if (event.type == platform::Event::Type::KeyDown) {
         if (event.key == 0x40000052 || event.key == 'w') {
             selected_option--;

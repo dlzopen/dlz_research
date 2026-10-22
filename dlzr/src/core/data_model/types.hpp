@@ -337,6 +337,28 @@ struct FightFighter {
 };
 static_assert(sizeof(FightFighter) == 64, "FightFighter must be 64 bytes");
 
+// ============================================================
+// MAP.DAT / BLK.DAT 运行时结构（战斗地图瓦片）
+// 证据: output/map_dat_analysis.md (格式) + scripts/export_map.py (解析实现，
+//       其渲染结果 export/map/00_*.png 与原版截图逐像素吻合)。
+// MAP.DAT: 64×8B 索引 + 47 个顺序地图记录
+//   记录 = width(u16) height(u16) blk_file[12] pal_file[12] tiles[u16 * w*h]
+//   tile 低 12 位 = BLK 组内瓦片号，高 4 位 = 地形旗标
+// BLK.DAT: 64×(offset,length) 索引 + 顺序组数据；每组 = N 个 48×48 调色板索引瓦片
+// ============================================================
+
+struct FightMap {
+    int32_t width{0};
+    int32_t height{0};
+    int32_t blk_group{0};              // blk_file "dlz-NN.blk" → NN
+    std::vector<uint16_t> tiles;       // w*h 项 (低12位瓦片号, 高4位旗标)
+};
+
+struct BlkGroupData {
+    static constexpr int32_t kTileSize = 48;
+    std::vector<std::vector<uint8_t>> tiles;  // 每项 48*48 调色板索引
+};
+
 struct FightPeople {
     std::array<char, 16> name;    // +0x00 角色名称 (GBK)
     int32_t face;                 // +0x10 头像索引

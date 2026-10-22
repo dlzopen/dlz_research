@@ -81,6 +81,8 @@ public:
 
     core::GameData load_game_data() const;
     core::FightData load_fight(int32_t fight_index) const;
+    core::FightMap load_map(int32_t map_index) const;
+    core::BlkGroupData load_blk_group(int32_t blk_group) const;
     std::vector<std::string> load_dialogues() const;
     std::vector<uint8_t> load_wave_clip(int32_t wave_id) const;
     void load_towns(core::GameData& gd) const;

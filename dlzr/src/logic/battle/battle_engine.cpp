@@ -10,24 +10,148 @@
 
 namespace dlzr::logic {
 
-void BattleEngine::init(const core::FightData& fight, core::GameData& game,
+void BattleEngine::init(core::FightData& fight, core::GameData& game,
                          int32_t difficulty_level) {
     fight_ = &fight;
     game_ = &game;
     difficulty_level_ = difficulty_level;
     state_ = BattleState{};
 
+    // 主角(大队长) = fight.people[0]（战斗伤害/技能/结局判定均读该条目）。
+    // 应用角色选择界面的自定义：头像→face、阵型→class_type、滑块→strength/intelligence。
+    // 原版确认路径(FUN_0042e2d6 的 CONFIRM 分支)：
+    //   People[0].face        = 头像选择 + 0x67 (= 103 + portrait)
+    //   People[0].class_type  = 阵型 → 兵种索引 {1,4,8,11}  (DAT_007d0f24)
+    //   People[0].strength    = 武力滑块值  (DAT_007d0f14)
+    //   People[0].intelligence= 160 - 武力  (DAT_007d0f18 = 0xa0 - 武力)
+    if (game.protagonist_face >= 0 && fight.people.size() > 0) {
+        auto& hero = fight.people[0];
+        hero.face = game.protagonist_face;
+        hero.class_type = game.protagonist_class_type;
+        hero.strength = game.protagonist_strength;
+        hero.intelligence = game.protagonist_intelligence;
+        // 主角等级：原版 CONFIRM 分支(FUN_0042e2d6.c:245-298)只写 face/class/strength/
+        // intel/weapon/name，**从不写 level**（已逐行核对，无 DAT_007d0f24 之外的 level 写入）。
+        // 故等级继承战役主角名册记录 game.people[0]（孙悟空，PEOPLE.DAT[0].level=1），
+        // 而非自创的 protagonist_level 占位（默认10）。
+        hero.level = game.people[0].level;
+        // 主角名用角色选择界面定制名（默认"主角"），避免沿用 FIGHT.DAT people[0] 的"伪军"。
+        std::strncpy(hero.name.data(), game.protagonist_name.c_str(),
+                     hero.name.size() - 1);
+        hero.name.back() = '\0';
+
+        // ===================================================================
+        // 主角起始武器（证据：FUN_0042e2d6.c:257-269，DAT_007d0f24=兵种, DAT_007d0f6e=武器ID）
+        // 原版按兵种给武器，写入 People[0].wupin[2]
+        // （People 基址 0x7D0EF8；wupin[8] 占 +0x74..+0x7B ⇒ 0x7D0F6E = wupin[2]）：
+        //   class 1(手枪队) → 物品 100 转轮式手枪   （用户确认；原误标"勃郎宁手枪"）
+        //   class 4(大刀队) → 物品  82 钢刀          （原误标"大刀"）
+        //   class 8(步枪队) → 物品 109 老套筒         （原误标"汉阳造八八式"）
+        //   其他(骑兵队 11)  → 物品  82 钢刀
+        // 物品名实测自 GAME.DAT WuPin @0x43E0（72B/条）：[99]=id100 转轮式手枪，
+        //   [81]=id82 钢刀，[108]=id109 老套筒。ID 本身自初版即正确，此前仅注释名写错。
+        // ===================================================================
+        const int32_t cls = game.protagonist_class_type;
+        int32_t weapon = 82;                        // 默认：钢刀
+        if (cls == 1)      weapon = 100;            // 手枪队 → 转轮式手枪
+        else if (cls == 8) weapon = 109;            // 步枪队 → 老套筒
+        hero.items[2] = static_cast<uint8_t>(weapon);
+        hero.items[0] = 1;                          // 核桃（物品 1，补给品）
+
+        // ===================================================================
+        // 主角技能按兵种（证据：GAME.DAT ClassType.skill_flags @ +0x90，表 @0x0320，96×160B）
+        // SkillFlags 16 项顺序 = FightPeople 的 skill_supply(+0x34) … skill_airraid(+0x70)。
+        // 原版确认分支从 DAT_0096cc28[class*0xa0 + i] 填这 16 个计数器后，
+        // 再强制 skill_supply=1、skill_motivate=1（FUN_0042e2d6.c:271-278）。
+        // ⚠️ DAT_0096cc28 在 .data 的 BSS 区（RAW=0x43C00/RSZ=0x5200，VA 0x96cc28 在 RSZ 外），
+        //    运行时填充、静态 dump 不到；故此处改用同为按兵种的 ClassType.skill_flags 作为数据源。
+        // ===================================================================
+        if (cls >= 0 && cls < core::MAX_CLASS_TYPES) {
+            const auto& sf = game.class_types[cls].skill_flags;
+            hero.skill_supply      = sf.buji;      // 补给
+            hero.skill_motivate    = sf.jili;      // 激励
+            hero.skill_medical     = sf.yiliao;    // 医疗
+            hero.skill_fire        = sf.huogong;   // 火攻
+            hero.skill_log         = sf.gunmu;     // 滚木
+            hero.skill_rock        = sf.leishi;    // 擂石
+            hero.skill_intimidate  = sf.weishe;    // 威慑
+            hero.skill_harass      = sf.saorao;    // 骚扰
+            hero.skill_sabotage    = sf.pohuai;    // 破坏
+            hero.skill_plunder     = sf.lueduo;    // 掠夺
+            hero.skill_counterspy  = sf.fanjian;   // 反间
+            hero.skill_decoy       = sf.yibing;    // 疑兵
+            hero.skill_supervise   = sf.duzhan;    // 督战
+            hero.skill_assassinate = sf.ansha;     // 暗杀
+            hero.skill_poison      = sf.shidu;     // 施毒
+            hero.skill_airraid     = sf.kongxi;    // 空袭
+        }
+        // 原版确认分支强制前两项为 1（补给 / 激励）
+        hero.skill_supply = 1;
+        hero.skill_motivate = 1;
+    }
+
     init_grid();
     init_fighters();
 
     state_.phase = BattlePhase::PLAYER_TURN;
-    state_.current_fighter_idx = find_next_active_fighter(0);
+    // 优先让玩家(team 0)先手：若首个活跃单位不是我方，则跳到我方单位。
+    // Prefer the player to act first.
+    int32_t first_player = -1;
+    for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
+        if (state_.fighters[i].is_active && is_fighter_alive(i) &&
+            state_.fighters[i].team == 0) {
+            first_player = i;
+            break;
+        }
+    }
+    state_.current_fighter_idx =
+        (first_player >= 0) ? first_player : find_next_active_fighter(0);
 }
 
 void BattleEngine::init_grid() {
-    state_.grid_terrain = fight_->intro.grid_terrain;
-    state_.grid_param_x = fight_->intro.grid_param_x;
-    state_.grid_param_y = fight_->intro.grid_param_y;
+    // grid_param_x/y = 初始相机目标（视口中心），非网格尺寸。网格尺寸 = MAP.DAT 宽高。
+    state_.cam_target_x = fight_->intro.grid_param_x;
+    state_.cam_target_y = fight_->intro.grid_param_y;
+
+    // ===================================================================
+    // 战斗网格 = MAP.DAT 瓦片网格（证据: FUN_0041e97a.c 以 MAP.DAT 宽高
+    // DAT_0057ba20/22 为相机钳制边界；FIGHT.DAT 单位 grid_x/grid_y 范围
+    // 0-63/0-57 与地图尺寸上限一致）。
+    // 相机初始化照搬 FUN_0041e97a 普通模式分支（视口 9×9, 4 格边距）:
+    //   cam = clamp(target - 4, 0, map_dim - 9)
+    // ===================================================================
+    if (map_ && map_->width > 0 && map_->height > 0) {
+        state_.map_width = map_->width;
+        state_.map_height = map_->height;
+    } else {
+        // 无地图数据时的保守回退（不应用出现；保持可运行）
+        state_.map_width = 20;
+        state_.map_height = 20;
+    }
+
+    const int32_t w = state_.map_width, h = state_.map_height;
+    const int32_t tx = state_.cam_target_x, ty = state_.cam_target_y;
+    int32_t cx;
+    if (tx < 5) cx = 0;
+    else if (tx < w - 5) cx = tx - 4;
+    else cx = w - 9;
+    int32_t cy;
+    if (ty < 5) cy = 0;
+    else if (ty < h - 5) cy = ty - 4;
+    else cy = h - 9;
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    state_.cam_x = cx;
+    state_.cam_y = cy;
+
+    int32_t cells = state_.grid_cells();
+    // TODO(RE): 逆向真实逐格地形来源。FIGHT.DAT intro.grid_terrain[92] 并非
+    // MAP.DAT 网格的 1:1 地形，真实地形另有来源。当前暂置全可通行，保证
+    // 第一关可玩，待逆向后接入。
+    state_.grid_terrain.assign(cells, 0);
+    state_.grid_mines.assign(cells, BattleState::PlacedMine{});
+    state_.movement_mask.assign(cells, false);
+    state_.attack_mask.assign(cells, false);
 }
 
 void BattleEngine::init_fighters() {
@@ -38,15 +162,24 @@ void BattleEngine::init_fighters() {
     if (difficulty_level_ == 0) diff_pct = 80;
     else if (difficulty_level_ == 2) diff_pct = 130;
 
+    // --- 敌方 / 原战斗名册单位（来自 FIGHT.DAT.fighters + fight.people）---
     for (int i = 0; i < 128; ++i) {
         const auto& src = fight_->fighters[i];
-        if (src.stage == 0 && src.pos_x == 999) {
+        // 999 = 未部署（预备/reserve）。证据: FightFighter.grid_x 注释 "999=未部署"；
+        // 原版 reserve 单位待开场事件脚本(FUN_0043dd47)按剧情"按需上场"，此处不强制部署
+        // （用户确认 999 是对的、之后根据需要）。只让 stage==1 且 grid_x!=999 的单位登场。
+        if (src.stage != 1 || src.grid_x == 999) {
+            continue;
+        }
+        // FIGHT.DAT 每关只有 88 名角色名册 (People[88])，而战斗部署位有 128 个。
+        // 部署位 i >= 88 无对应角色数据，必须跳过，否则越界崩溃。
+        if (i >= static_cast<int>(fight_->people.size())) {
             continue;
         }
 
         auto& rt = state_.fighters[i];
-        rt.grid_x = src.pos_x;
-        rt.grid_y = src.pos_y;
+        rt.grid_x = src.grid_x;
+        rt.grid_y = src.grid_y;
         rt.direction = src.direction;
         rt.is_active = (src.stage != 0);
         rt.stamina = src.stamina;
@@ -55,6 +188,13 @@ void BattleEngine::init_fighters() {
 
         const auto& fp = fight_->people[i];
         rt.team = fp.enemy;
+        rt.class_type = fp.class_type;
+        rt.level = fp.level;
+        rt.strength = fp.strength;
+        rt.intelligence = fp.intelligence;
+        rt.skill_attack = fp.skill_attack;
+        rt.items = fp.items;
+        rt.mines = fp.mines;
 
         rt.stats.max_hp = src.stamina;
         rt.stats.current_hp = src.stamina;
@@ -71,8 +211,61 @@ void BattleEngine::init_fighters() {
         ++state_.fighter_count;
     }
 
-    state_.max_rounds = state_.fighter_count * 2 - 2;
-    if (state_.max_rounds < 2) state_.max_rounds = 2;
+    // --- 我方主角部署（证据: FIGHT.DAT fight0 实测 + confirm_to_battle_flow.md）---
+    // 实测 FIGHT.DAT fight0: 全部 88 个 people[] 均为 enemy=1（敌军名册），
+    //   仅 fighters[40]/[41] 为 stage=1 登场（敌方孙悟空 @ (6,17)/(7,17)）。
+    // 玩家单位不在 FIGHT.DAT 内；主角来自战役大军（game.people[0]），
+    //   由 FUN_0042e2d6 的 CONFIRM 分支把角色选择结果写入 fight.people[0]（大队长）。
+    //   克隆 init() 已对 fight.people[0] 应用 face/class/strength/intel/level/name/武器/技能。
+    // 部署坐标 = intro.grid_param（实测 fight0 = (9,25)），即相机中心 / 主角锚点。
+    //   ※ fight.people[0] 的 FIGHT.DAT 磁盘值为"伪军"(enemy=1) 占位，运行时被主角覆盖；
+    //     其 HP/体力用兵种 HP 公式（PEOPLE_DAT_FORMAT.md），不取磁盘 stamina。
+    //   ※ 玩家大军其余成员（平阳游击队等）按原版属"战役招募"体系，当前克隆尚未建模，
+    //     待 RE 接入；首关以主角单员登场（贴合"开局仅大队长"的数据事实），不臆造同伴。
+    //   ※ 主角占"敌方循环结束后第一个空闲战斗位"，避免覆盖已部署的敌方单位
+    //     （fight0 下即战斗位 0，因 fighters[0] 为 stage=0 预备）。
+    {
+        int32_t hero_slot = 0;
+        for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
+            if (!state_.fighters[i].is_active) { hero_slot = i; break; }
+        }
+        auto& rt = state_.fighters[hero_slot];
+        rt.people_idx = 0;                            // 指向被覆盖为大队长的 fight.people[0]
+        rt.team = 0;                                  // 我方
+        rt.grid_x = fight_->intro.grid_param_x;      // 9
+        rt.grid_y = fight_->intro.grid_param_y;      // 25
+        rt.direction = 1;
+        rt.is_active = true;
+        rt.has_acted = false;
+        rt.stamina = 100;
+        rt.movement = 100;
+
+        const auto& hero = fight_->people[0];        // 已被 init() 覆盖为角色选择结果
+        rt.class_type = hero.class_type;
+        rt.level = hero.level;
+        rt.strength = hero.strength;
+        rt.intelligence = hero.intelligence;
+        rt.skill_attack = hero.skill_attack;
+        rt.items = hero.items;
+        rt.mines = hero.mines;
+
+        // HP 真实公式：max_hp = hp_base + (level-1)*hp_growth（PEOPLE_DAT_FORMAT.md）
+        const auto& cls = get_class_type(hero.class_type);
+        int32_t hp = cls.hp_base;
+        if (hero.level > 1) hp += (hero.level - 1) * cls.hp_growth;
+        if (hp <= 0) hp = 100;
+        rt.stats.max_hp = hp;
+        rt.stats.current_hp = hp;
+        rt.stats.morale = 100;
+        rt.stats.equip_integrity = 100;
+        rt.stats.defense_modifier = 100;
+
+        ++state_.fighter_count;
+    }
+
+    // 回合上限：原版公式待逆向；暂用较宽松值，确保战斗可推进到分出胜负。
+    // Round limit: original formula pending RE. Generous value for now.
+    state_.max_rounds = 50;
 }
 
 int32_t BattleEngine::find_next_active_fighter(int32_t from_idx) {
@@ -100,6 +293,12 @@ int32_t BattleEngine::count_alive_on_team(int32_t team) const {
 }
 
 const core::FightPeople& BattleEngine::get_fight_people(int32_t fighter_idx) const {
+    // 防御：运行时索引可能指向我方自动部署位(>=88)，超出 fight.people 范围。
+    // 我方技能/属性已在 RuntimeFighter 上解耦；此处仅敌方路径有效。
+    if (fighter_idx < 0 ||
+        fighter_idx >= static_cast<int>(fight_->people.size())) {
+        return fight_->people[0];
+    }
     return fight_->people[fighter_idx];
 }
 
@@ -115,8 +314,7 @@ int32_t BattleEngine::get_movement_range(int32_t fighter_idx) const {
     const auto& fighter = state_.fighters[fighter_idx];
     if (!fighter.is_active) return 0;
 
-    const auto& fp = fight_->people[fighter.people_idx];
-    const auto& cls = get_class_type(fp.class_type);
+    const auto& cls = get_class_type(fighter.class_type);
     int32_t base_range = cls.movement;
     if (base_range <= 0) base_range = 3;
 
@@ -126,13 +324,23 @@ int32_t BattleEngine::get_movement_range(int32_t fighter_idx) const {
     return std::max(1, base_range * move_pct / 100);
 }
 
+void BattleEngine::set_selected_fighter(int32_t idx) {
+    state_.selected_fighter_idx = idx;
+    if (idx >= 0 && idx < BattleState::MAX_FIGHTERS && state_.fighters[idx].is_active) {
+        calc_movement_range(idx);   // 写入 state_.movement_mask（可达集）
+        calc_attack_range(idx);     // 写入 state_.attack_mask（攻击范围）
+    } else {
+        state_.movement_mask.assign(state_.grid_cells(), false);
+        state_.attack_mask.assign(state_.grid_cells(), false);
+    }
+}
+
 int32_t BattleEngine::get_attack_range(int32_t fighter_idx) const {
     if (fighter_idx < 0 || fighter_idx >= BattleState::MAX_FIGHTERS) return 1;
     const auto& fighter = state_.fighters[fighter_idx];
     if (!fighter.is_active) return 1;
 
-    const auto& fp = fight_->people[fighter.people_idx];
-    const auto& cls = get_class_type(fp.class_type);
+    const auto& cls = get_class_type(fighter.class_type);
     int32_t range = cls.select_range;
     if (range <= 0) range = 1;
     if (range > 5) range = 5;
@@ -140,7 +348,7 @@ int32_t BattleEngine::get_attack_range(int32_t fighter_idx) const {
 }
 
 void BattleEngine::calc_movement_range(int32_t fighter_idx) {
-    state_.movement_mask.fill(false);
+    state_.movement_mask.assign(state_.grid_cells(), false);
 
     if (fighter_idx < 0 || fighter_idx >= BattleState::MAX_FIGHTERS) return;
     const auto& fighter = state_.fighters[fighter_idx];
@@ -152,10 +360,10 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
 
     struct Pos { int32_t x, y, dist; };
     std::queue<Pos> bfs;
-    std::array<bool, BattleState::GRID_COLS * BattleState::GRID_ROWS> visited{};
+    std::vector<bool> visited(state_.grid_cells(), false);
 
-    int32_t start_cell = start_y * BattleState::GRID_COLS + start_x;
-    if (start_cell < 0 || start_cell >= BattleState::GRID_COLS * BattleState::GRID_ROWS) return;
+    int32_t start_cell = start_y * state_.map_width + start_x;
+    if (start_cell < 0 || start_cell >= state_.grid_cells()) return;
 
     visited[start_cell] = true;
     bfs.push({start_x, start_y, 0});
@@ -173,10 +381,10 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
         for (int d = 0; d < 4; ++d) {
             int32_t nx = cx + dx[d];
             int32_t ny = cy + dy[d];
-            if (nx < 0 || nx >= BattleState::GRID_COLS) continue;
-            if (ny < 0 || ny >= BattleState::GRID_ROWS) continue;
+            if (nx < 0 || nx >= state_.map_width) continue;
+            if (ny < 0 || ny >= state_.map_height) continue;
 
-            int32_t ncell = ny * BattleState::GRID_COLS + nx;
+            int32_t ncell = ny * state_.map_width + nx;
             if (visited[ncell]) continue;
             if (state_.grid_terrain[ncell] == 99) continue;
 
@@ -200,7 +408,7 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
 }
 
 void BattleEngine::calc_attack_range(int32_t fighter_idx) {
-    state_.attack_mask.fill(false);
+    state_.attack_mask.assign(state_.grid_cells(), false);
 
     if (fighter_idx < 0 || fighter_idx >= BattleState::MAX_FIGHTERS) return;
     const auto& fighter = state_.fighters[fighter_idx];
@@ -210,22 +418,21 @@ void BattleEngine::calc_attack_range(int32_t fighter_idx) {
     int32_t cx = fighter.grid_x;
     int32_t cy = fighter.grid_y;
 
-    for (int y = 0; y < BattleState::GRID_ROWS; ++y) {
-        for (int x = 0; x < BattleState::GRID_COLS; ++x) {
+    for (int y = 0; y < state_.map_height; ++y) {
+        for (int x = 0; x < state_.map_width; ++x) {
             int32_t dx = x - cx;
             int32_t dy = y - cy;
             int32_t dist = dx * dx + dy * dy;
             if (dist > 0 && dist <= range * range) {
-                state_.attack_mask[y * BattleState::GRID_COLS + x] = true;
+                state_.attack_mask[y * state_.map_width + x] = true;
             }
         }
     }
 }
 
 bool BattleEngine::is_valid_move_target(int32_t grid_x, int32_t grid_y) const {
-    if (grid_x < 0 || grid_x >= BattleState::GRID_COLS) return false;
-    if (grid_y < 0 || grid_y >= BattleState::GRID_ROWS) return false;
-    int32_t cell = grid_y * BattleState::GRID_COLS + grid_x;
+    if (!state_.in_grid(grid_x, grid_y)) return false;
+    int32_t cell = grid_y * state_.map_width + grid_x;
     return state_.movement_mask[cell];
 }
 
@@ -300,6 +507,12 @@ void BattleEngine::execute_attack(const BattleCommand& cmd) {
 }
 
 void BattleEngine::execute_skill(const BattleCommand& cmd) {
+    // 我方单位的技能数据已解耦到 RuntimeFighter；当前技能执行仅走敌方名册路径。
+    // 玩家技能待接入后统一，这里对非敌方索引直接返回，避免越界/错配。
+    if (cmd.fighter_idx < 0 ||
+        cmd.fighter_idx >= static_cast<int>(fight_->people.size())) {
+        return;
+    }
     const auto& fp = get_fight_people(cmd.fighter_idx);
 
     core::People person{};
@@ -361,14 +574,13 @@ void BattleEngine::execute_wait(const BattleCommand& cmd) {
 
 void BattleEngine::execute_place_mine(const BattleCommand& cmd) {
     auto& fighter = state_.fighters[cmd.fighter_idx];
-    const auto& fp = fight_->people[fighter.people_idx];
 
     if (cmd.mine_slot < 0 || cmd.mine_slot >= 8) return;
-    uint8_t mine_idx = fp.mines[cmd.mine_slot];
+    uint8_t mine_idx = fighter.mines[cmd.mine_slot];
     if (mine_idx == 0 || mine_idx >= core::MAX_DILEI) return;
 
-    int32_t cell = cmd.target_y * BattleState::GRID_COLS + cmd.target_x;
-    if (cell < 0 || cell >= 92) return;
+    int32_t cell = cmd.target_y * state_.map_width + cmd.target_x;
+    if (cell < 0 || cell >= state_.grid_cells()) return;
     if (state_.grid_terrain[cell] == 99) return;
     if (state_.grid_mines[cell].mine_type != 0) return;
 
@@ -406,8 +618,8 @@ void BattleEngine::execute_use_item(const BattleCommand& cmd) {
 }
 
 void BattleEngine::check_mine_trigger(int32_t fighter_idx, int32_t grid_x, int32_t grid_y) {
-    int32_t cell = grid_y * BattleState::GRID_COLS + grid_x;
-    if (cell < 0 || cell >= 92) return;
+    int32_t cell = grid_y * state_.map_width + grid_x;
+    if (cell < 0 || cell >= state_.grid_cells()) return;
 
     auto& mine = state_.grid_mines[cell];
     if (mine.mine_type == 0) return;
@@ -443,39 +655,47 @@ void BattleEngine::check_mine_trigger(int32_t fighter_idx, int32_t grid_x, int32
 }
 
 void BattleEngine::apply_damage(int32_t attacker_idx, int32_t defender_idx) {
-    const auto& atk_fp = get_fight_people(attacker_idx);
-    const auto& def_fp = get_fight_people(defender_idx);
+    // 使用单位在部署时解耦拷贝的属性，而非按运行时索引反查名册（玩家单位
+    // 的索引指向 PEOPLE.DAT，直接反查 fight.people 会得到错误角色的数据）。
+    const auto& atk_rt = state_.fighters[attacker_idx];
+    const auto& def_rt = state_.fighters[defender_idx];
 
     core::People atk_person{};
-    atk_person.strength = atk_fp.strength;
-    atk_person.intelligence = atk_fp.intelligence;
-    atk_person.level = atk_fp.level;
-    atk_person.class_type = atk_fp.class_type;
+    atk_person.strength = atk_rt.strength;
+    atk_person.intelligence = atk_rt.intelligence;
+    atk_person.level = atk_rt.level;
+    atk_person.class_type = atk_rt.class_type;
+    atk_person.items = atk_rt.items;
 
     core::People def_person{};
-    def_person.strength = def_fp.strength;
-    def_person.intelligence = def_fp.intelligence;
-    def_person.level = def_fp.level;
-    def_person.class_type = def_fp.class_type;
+    def_person.strength = def_rt.strength;
+    def_person.intelligence = def_rt.intelligence;
+    def_person.level = def_rt.level;
+    def_person.class_type = def_rt.class_type;
+    def_person.items = def_rt.items;
 
-    const auto& atk_class = get_class_type(atk_fp.class_type);
-    const auto& def_class = get_class_type(def_fp.class_type);
+    const auto& atk_class = get_class_type(atk_rt.class_type);
+    const auto& def_class = get_class_type(def_rt.class_type);
 
-    const auto& atk_fighter = state_.fighters[attacker_idx];
-    const auto& def_fighter = state_.fighters[defender_idx];
+    const auto& atk_fighter = atk_rt;
+    const auto& def_fighter = def_rt;
 
     // 地形防御加成 / Terrain defense bonus for defender
-    int32_t def_cell = def_fighter.grid_y * BattleState::GRID_COLS + def_fighter.grid_x;
-    int32_t terrain_type = (def_cell >= 0 && def_cell < 92) ? state_.grid_terrain[def_cell] : 0;
+    int32_t def_cell = def_fighter.grid_y * state_.map_width + def_fighter.grid_x;
+    int32_t terrain_type = (def_cell >= 0 && def_cell < state_.grid_cells())
+                               ? state_.grid_terrain[def_cell] : 0;
     int32_t terrain_bonus = get_terrain_defense_bonus(terrain_type);
 
-    // 物品攻防加成 / Item attack/defense bonuses (simplified: 0 for now)
-    // TODO: Implement get_item_attack_bonus() and get_item_defense_bonus() from equipped items
-    int32_t item_atk_bonus = 0;
-    int32_t item_def_bonus = 0;
+    // 物品攻防加成 / Item attack/defense bonuses (RE: 0x0042B042 / 0x0042B0EA)
+    int32_t item_atk_bonus = (game_ != nullptr)
+                                 ? get_item_attack_bonus(atk_person, *game_)
+                                 : 0;
+    int32_t item_def_bonus = (game_ != nullptr)
+                                 ? get_item_defense_bonus(def_person, *game_)
+                                 : 0;
 
     // 攻击者技能等级 / Attacker's skill level for attack
-    int32_t atk_skill_exp = (&atk_fp.skill_attack)[0];  // Basic attack skill
+    int32_t atk_skill_exp = atk_rt.skill_attack;  // Basic attack skill
     int32_t atk_skill_level = get_skill_level(atk_skill_exp);
 
     int32_t atk_power = calc_attack_power(atk_person, atk_class, atk_fighter.stats, atk_skill_level, true, item_atk_bonus);
@@ -540,9 +760,8 @@ void BattleEngine::award_kill_exp(int32_t killer_idx, int32_t victim_idx) {
     int32_t people_idx = killer_fighter.people_idx;
     if (people_idx < 0 || people_idx >= core::MAX_PEOPLE) return;
 
-    const auto& victim_fp = get_fight_people(victim_idx);
-    int32_t killer_level = get_fight_people(killer_idx).level;
-    int32_t victim_level = victim_fp.level;
+    int32_t killer_level = state_.fighters[killer_idx].level;
+    int32_t victim_level = state_.fighters[victim_idx].level;
     int32_t base_exp = victim_level * 10;
 
     int32_t exp = calc_experience(killer_level, victim_level, base_exp);
@@ -642,11 +861,10 @@ int32_t BattleEngine::bfs_step_toward(int32_t from_x, int32_t from_y,
                                        int32_t max_dist) {
     struct Pos { int32_t x, y; };
     std::queue<Pos> bfs;
-    std::array<bool, BattleState::GRID_COLS * BattleState::GRID_ROWS> visited{};
-    std::array<int32_t, BattleState::GRID_COLS * BattleState::GRID_ROWS> first_step{};
-    first_step.fill(-1);
+    std::vector<bool> visited(state_.grid_cells(), false);
+    std::vector<int32_t> first_step(state_.grid_cells(), -1);
 
-    int32_t start_cell = from_y * BattleState::GRID_COLS + from_x;
+    int32_t start_cell = from_y * state_.map_width + from_x;
     visited[start_cell] = true;
     bfs.push({from_x, from_y});
 
@@ -657,7 +875,7 @@ int32_t BattleEngine::bfs_step_toward(int32_t from_x, int32_t from_y,
         auto [cx, cy] = bfs.front();
         bfs.pop();
 
-        int32_t ccell = cy * BattleState::GRID_COLS + cx;
+        int32_t ccell = cy * state_.map_width + cx;
         int32_t cdist = 0;
         {
             int32_t ddx = cx - from_x;
@@ -669,10 +887,10 @@ int32_t BattleEngine::bfs_step_toward(int32_t from_x, int32_t from_y,
         for (int d = 0; d < 4; ++d) {
             int32_t nx = cx + dx[d];
             int32_t ny = cy + dy[d];
-            if (nx < 0 || nx >= BattleState::GRID_COLS) continue;
-            if (ny < 0 || ny >= BattleState::GRID_ROWS) continue;
+            if (nx < 0 || nx >= state_.map_width) continue;
+            if (ny < 0 || ny >= state_.map_height) continue;
 
-            int32_t ncell = ny * BattleState::GRID_COLS + nx;
+            int32_t ncell = ny * state_.map_width + nx;
             if (visited[ncell]) continue;
             if (state_.grid_terrain[ncell] == 99) continue;
 
@@ -702,9 +920,9 @@ int32_t BattleEngine::bfs_step_toward(int32_t from_x, int32_t from_y,
 
     int32_t best_cell = -1;
     int32_t best_dist = INT32_MAX;
-    for (int y = 0; y < BattleState::GRID_ROWS; ++y) {
-        for (int x = 0; x < BattleState::GRID_COLS; ++x) {
-            int32_t cell = y * BattleState::GRID_COLS + x;
+    for (int y = 0; y < state_.map_height; ++y) {
+        for (int x = 0; x < state_.map_width; ++x) {
+            int32_t cell = y * state_.map_width + x;
             if (!visited[cell]) continue;
             int32_t ddx = x - to_x;
             int32_t ddy = y - to_y;
@@ -933,10 +1151,10 @@ BattleCommand BattleEngine::ai_try_mine(int32_t fighter_idx) {
             if (ox == 0 && oy == 0) continue;
             int32_t mx = enemy.grid_x + ox;
             int32_t my = enemy.grid_y + oy;
-            if (mx < 0 || mx >= BattleState::GRID_COLS) continue;
-            if (my < 0 || my >= BattleState::GRID_ROWS) continue;
+            if (mx < 0 || mx >= state_.map_width) continue;
+            if (my < 0 || my >= state_.map_height) continue;
 
-            int32_t cell = my * BattleState::GRID_COLS + mx;
+            int32_t cell = my * state_.map_width + mx;
             if (state_.grid_mines[cell].mine_type > 0) continue;
             if (state_.fighters[fighter_idx].grid_x == mx &&
                 state_.fighters[fighter_idx].grid_y == my) continue;
@@ -980,8 +1198,8 @@ BattleCommand BattleEngine::ai_patrol(int32_t fighter_idx) {
     int32_t px = src.target_pos_x;
     int32_t py = src.target_pos_y;
 
-    if (px < 0 || px >= BattleState::GRID_COLS ||
-        py < 0 || py >= BattleState::GRID_ROWS) {
+    if (px < 0 || px >= state_.map_width ||
+        py < 0 || py >= state_.map_height) {
         return ai_chase(fighter_idx);
     }
 
@@ -1010,9 +1228,9 @@ BattleCommand BattleEngine::ai_patrol(int32_t fighter_idx) {
         constexpr int sdy[] = {-1, 1, 0, 0};
         int32_t nx = fighter.grid_x + sdx[step];
         int32_t ny = fighter.grid_y + sdy[step];
-        int32_t ncell = ny * BattleState::GRID_COLS + nx;
-        if (nx >= 0 && nx < BattleState::GRID_COLS &&
-            ny >= 0 && ny < BattleState::GRID_ROWS &&
+        int32_t ncell = ny * state_.map_width + nx;
+        if (nx >= 0 && nx < state_.map_width &&
+            ny >= 0 && ny < state_.map_height &&
             state_.movement_mask[ncell]) {
             cmd.type = BattleCommand::MOVE;
             cmd.target_x = nx;
@@ -1049,8 +1267,8 @@ BattleCommand BattleEngine::ai_guard(int32_t fighter_idx) {
         }
     }
 
-    if (guard_x >= 0 && guard_x < BattleState::GRID_COLS &&
-        guard_y >= 0 && guard_y < BattleState::GRID_ROWS) {
+    if (guard_x >= 0 && guard_x < state_.map_width &&
+        guard_y >= 0 && guard_y < state_.map_height) {
         int32_t dx = fighter.grid_x - guard_x;
         int32_t dy = fighter.grid_y - guard_y;
         if (dx * dx + dy * dy <= 4) {
@@ -1066,9 +1284,9 @@ BattleCommand BattleEngine::ai_guard(int32_t fighter_idx) {
             constexpr int sdy[] = {-1, 1, 0, 0};
             int32_t nx = fighter.grid_x + sdx[step];
             int32_t ny = fighter.grid_y + sdy[step];
-            int32_t ncell = ny * BattleState::GRID_COLS + nx;
-            if (nx >= 0 && nx < BattleState::GRID_COLS &&
-                ny >= 0 && ny < BattleState::GRID_ROWS &&
+            int32_t ncell = ny * state_.map_width + nx;
+            if (nx >= 0 && nx < state_.map_width &&
+                ny >= 0 && ny < state_.map_height &&
                 state_.movement_mask[ncell]) {
                 cmd.type = BattleCommand::MOVE;
                 cmd.target_x = nx;
@@ -1139,9 +1357,9 @@ BattleCommand BattleEngine::ai_assist(int32_t fighter_idx) {
         constexpr int sdy[] = {-1, 1, 0, 0};
         int32_t nx = fighter.grid_x + sdx[step];
         int32_t ny = fighter.grid_y + sdy[step];
-        int32_t ncell = ny * BattleState::GRID_COLS + nx;
-        if (nx >= 0 && nx < BattleState::GRID_COLS &&
-            ny >= 0 && ny < BattleState::GRID_ROWS &&
+        int32_t ncell = ny * state_.map_width + nx;
+        if (nx >= 0 && nx < state_.map_width &&
+            ny >= 0 && ny < state_.map_height &&
             state_.movement_mask[ncell]) {
             cmd.type = BattleCommand::MOVE;
             cmd.target_x = nx;
@@ -1178,8 +1396,8 @@ BattleCommand BattleEngine::ai_ambush(int32_t fighter_idx) {
         }
     }
 
-    if (ambush_x >= 0 && ambush_x < BattleState::GRID_COLS &&
-        ambush_y >= 0 && ambush_y < BattleState::GRID_ROWS) {
+    if (ambush_x >= 0 && ambush_x < state_.map_width &&
+        ambush_y >= 0 && ambush_y < state_.map_height) {
         int32_t dx = fighter.grid_x - ambush_x;
         int32_t dy = fighter.grid_y - ambush_y;
         if (dx * dx + dy * dy <= 1) {
@@ -1195,9 +1413,9 @@ BattleCommand BattleEngine::ai_ambush(int32_t fighter_idx) {
             constexpr int sdy[] = {-1, 1, 0, 0};
             int32_t nx = fighter.grid_x + sdx[step];
             int32_t ny = fighter.grid_y + sdy[step];
-            int32_t ncell = ny * BattleState::GRID_COLS + nx;
-            if (nx >= 0 && nx < BattleState::GRID_COLS &&
-                ny >= 0 && ny < BattleState::GRID_ROWS &&
+            int32_t ncell = ny * state_.map_width + nx;
+            if (nx >= 0 && nx < state_.map_width &&
+                ny >= 0 && ny < state_.map_height &&
                 state_.movement_mask[ncell]) {
                 cmd.type = BattleCommand::MOVE;
                 cmd.target_x = nx;
@@ -1230,9 +1448,9 @@ BattleCommand BattleEngine::ai_chase(int32_t fighter_idx) {
     int32_t best_x = -1, best_y = -1;
     int32_t best_dist = INT32_MAX;
 
-    for (int y = 0; y < BattleState::GRID_ROWS; ++y) {
-        for (int x = 0; x < BattleState::GRID_COLS; ++x) {
-            int32_t cell = y * BattleState::GRID_COLS + x;
+    for (int y = 0; y < state_.map_height; ++y) {
+        for (int x = 0; x < state_.map_width; ++x) {
+            int32_t cell = y * state_.map_width + x;
             if (!state_.movement_mask[cell]) continue;
 
             int32_t dx = x - target_fighter.grid_x;
@@ -1264,9 +1482,9 @@ BattleCommand BattleEngine::ai_chase(int32_t fighter_idx) {
         constexpr int sdy[] = {-1, 1, 0, 0};
         int32_t nx = fighter.grid_x + sdx[step];
         int32_t ny = fighter.grid_y + sdy[step];
-        int32_t ncell = ny * BattleState::GRID_COLS + nx;
-        if (nx >= 0 && nx < BattleState::GRID_COLS &&
-            ny >= 0 && ny < BattleState::GRID_ROWS &&
+        int32_t ncell = ny * state_.map_width + nx;
+        if (nx >= 0 && nx < state_.map_width &&
+            ny >= 0 && ny < state_.map_height &&
             state_.movement_mask[ncell]) {
             cmd.type = BattleCommand::MOVE;
             cmd.target_x = nx;
@@ -1301,9 +1519,9 @@ BattleCommand BattleEngine::ai_retreat(int32_t fighter_idx) {
     int32_t edy = fighter.grid_y - enemy.grid_y;
     int32_t cur_dist = edx * edx + edy * edy;
 
-    for (int y = 0; y < BattleState::GRID_ROWS; ++y) {
-        for (int x = 0; x < BattleState::GRID_COLS; ++x) {
-            int32_t cell = y * BattleState::GRID_COLS + x;
+    for (int y = 0; y < state_.map_height; ++y) {
+        for (int x = 0; x < state_.map_width; ++x) {
+            int32_t cell = y * state_.map_width + x;
             if (!state_.movement_mask[cell]) continue;
 
             int32_t dx = x - enemy.grid_x;

@@ -10,6 +10,7 @@ add_library(dlzr_app STATIC
     resource/flc_loader.cpp
     resource/save_loader.cpp
     resource/face_loader.cpp
+    resource/army_loader.cpp
 )
 target_include_directories(dlzr_app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..

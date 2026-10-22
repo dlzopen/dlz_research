@@ -4,6 +4,9 @@
 #include "logic/dialogue/dialogue_manager.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <filesystem>
 #include <stdexcept>
 
 namespace dlzr::logic {
@@ -12,40 +15,62 @@ void DialogueManager::load_dialogues(const std::vector<std::string>& dialogue_te
     dialogues_ = dialogue_texts;
 }
 
-void DialogueManager::init_dialogue_groups() {
-    // Dialogue group table from VA 0x446030
-    // 8 groups, each with SubA and SubB sequences (zero-terminated)
-    // Data from dialogue_branch_analysis.md section 2.1
+void DialogueManager::init_dialogue_groups(const std::string& engine_data_dir) {
+    // 对话组表与映射表均来自原版 EXE 数据段（byte-级实测抽取），
+    // 不再硬编码常量：原硬编码的 8 组表不完整（如 Group0 SubA 实为 12 项而非 8 项），
+    // 会导致对话序列被截断、跳过条目。现统一从数据文件建索引。
+    namespace fs = std::filesystem;
 
-    // Group 0: SubA = {2,12,21,31,41,51,61,71}, SubB = {3,13,8,18}
-    dialogue_groups_[0].sub_a = {2,12,21,31,41,51,61,71, 0,0,0,0,0,0,0,0};
-    dialogue_groups_[0].sub_b = {3,13,8,18, 0,0,0,0,0,0,0,0,0,0,0,0};
+    // ---- 组表：dialogue_groups.bin（1024 字节 = 8 组 × [SubA 16u32][SubB 16u32]）----
+    const fs::path grp_path = fs::path(engine_data_dir) / "dialogue_groups.bin";
+    {
+        std::ifstream f(grp_path, std::ios::binary);
+        if (!f) {
+            std::fprintf(stderr,
+                "DialogueManager: 找不到组表 %s（构建需随 exe 部署 dialogue_groups.bin）\n",
+                grp_path.string().c_str());
+        } else {
+            std::vector<uint8_t> buf(1024);
+            f.read(reinterpret_cast<char*>(buf.data()), 1024);
+            if (f.gcount() == 1024) {
+                for (int g = 0; g < core::DIALOGUE_GROUP_COUNT; ++g) {
+                    const uint8_t* base = buf.data() + g * 32 * 4;
+                    for (int k = 0; k < 16; ++k) {
+                        dialogue_groups_[g].sub_a[k] =
+                            static_cast<int32_t>(*reinterpret_cast<const uint32_t*>(base + k * 4));
+                        dialogue_groups_[g].sub_b[k] =
+                            static_cast<int32_t>(*reinterpret_cast<const uint32_t*>(base + (16 + k) * 4));
+                    }
+                }
+            } else {
+                std::fprintf(stderr, "DialogueManager: 组表 %s 长度不足 1024 字节\n",
+                             grp_path.string().c_str());
+            }
+        }
+    }
 
-    // Group 1: SubA = {1,11,22,42,52,72,61,31}, SubB = {6,16,7,17}
-    dialogue_groups_[1].sub_a = {1,11,22,42,52,72,61,31, 0,0,0,0,0,0,0,0};
-    dialogue_groups_[1].sub_b = {6,16,7,17, 0,0,0,0,0,0,0,0,0,0,0,0};
-
-    // Group 2: SubA = {1,11,23,22,42,52,72,61}, SubB = {31,5,15,33}
-    dialogue_groups_[2].sub_a = {1,11,23,22,42,52,72,61, 0,0,0,0,0,0,0,0};
-    dialogue_groups_[2].sub_b = {31,5,15,33, 0,0,0,0,0,0,0,0,0,0,0,0};
-
-    // Group 3: SubA = {23,5,15,33}, SubB = empty
-    dialogue_groups_[3].sub_a = {23,5,15,33, 0,0,0,0,0,0,0,0,0,0,0,0};
-    dialogue_groups_[3].sub_b = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-
-    // Group 4: SubA = {1,11,22,42,52,72,31,4}, SubB = {14,32}
-    dialogue_groups_[4].sub_a = {1,11,22,42,52,72,31,4, 0,0,0,0,0,0,0,0};
-    dialogue_groups_[4].sub_b = {14,32, 0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-
-    // Group 5: SubA = {4,14,32,31,41,71}, SubB = empty
-    dialogue_groups_[5].sub_a = {4,14,32,31,41,71, 0,0,0,0,0,0,0,0,0,0};
-    dialogue_groups_[5].sub_b = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-
-    // Group 6: Same as Group 2
-    dialogue_groups_[6] = dialogue_groups_[2];
-
-    // Group 7: Same as Group 1
-    dialogue_groups_[7] = dialogue_groups_[1];
+    // ---- 映射表：dialogue_map.bin（64 字节 = 16×u32 fight_txt）----
+    const fs::path map_path = fs::path(engine_data_dir) / "dialogue_map.bin";
+    {
+        std::ifstream f(map_path, std::ios::binary);
+        if (!f) {
+            std::fprintf(stderr,
+                "DialogueManager: 找不到映射表 %s（构建需随 exe 部署 dialogue_map.bin）\n",
+                map_path.string().c_str());
+        } else {
+            std::vector<uint8_t> buf(64);
+            f.read(reinterpret_cast<char*>(buf.data()), 64);
+            if (f.gcount() == 64) {
+                for (int i = 0; i < 16; ++i) {
+                    fight_txt_table_[i] =
+                        static_cast<int32_t>(*reinterpret_cast<const uint32_t*>(buf.data() + i * 4));
+                }
+            } else {
+                std::fprintf(stderr, "DialogueManager: 映射表 %s 长度不足 64 字节\n",
+                             map_path.string().c_str());
+            }
+        }
+    }
 }
 
 const std::array<int32_t, 16>& DialogueManager::get_sub_a(int32_t group_index) const {
@@ -63,10 +88,11 @@ const std::array<int32_t, 16>& DialogueManager::get_sub_b(int32_t group_index) c
 }
 
 int32_t DialogueManager::get_dialogue_group(int32_t fight_txt) const {
-    // Search mapping table for fight_txt value (VA 0x448720)
-    // On match, dialogue index = position + 2, mapped to group via mod 8
+    // 搜索映射表（dialogue_map.bin，原版实测 0x46320）中的 fight_txt，
+    // 命中后对话组 = (position + 2) % 8（证据：dispatch VA 0x43DCA0 搜索 16 项表，
+    // 命中返回 position+2 存入 0x98D808；group 经 mod 8 取 0..7）。
     for (int i = 0; i < 16; ++i) {
-        if (kFightTxtTable[i] == fight_txt) {
+        if (fight_txt_table_[i] == fight_txt) {
             return (i + 2) % core::DIALOGUE_GROUP_COUNT;
         }
     }
@@ -82,7 +108,11 @@ std::vector<std::string> DialogueManager::resolve_fight_dialogue(int32_t fight_t
     for (int32_t entry_id : sub_a) {
         if (entry_id == 0) break;
         if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
-            result.push_back(dialogues_[entry_id]);
+            // Skip entries that are empty or just the "xx" terminator
+            core::Dialogue d = parse_dialogue(dialogues_[entry_id]);
+            if (!d.text.empty()) {
+                result.push_back(dialogues_[entry_id]);
+            }
         }
     }
 
@@ -98,7 +128,10 @@ std::vector<std::string> DialogueManager::resolve_fight_dialogue_b(int32_t fight
     for (int32_t entry_id : sub_b) {
         if (entry_id == 0) break;
         if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
-            result.push_back(dialogues_[entry_id]);
+            core::Dialogue d = parse_dialogue(dialogues_[entry_id]);
+            if (!d.text.empty()) {
+                result.push_back(dialogues_[entry_id]);
+            }
         }
     }
 
@@ -190,38 +223,44 @@ core::Dialogue DialogueManager::parse_dialogue(const std::string& entry) {
     core::Dialogue dialogue;
     dialogue.speaker_id = -1;  // Default to narrator
 
-    // Parse format: "speaker_code text"
-    // Speaker code can be: -1, 00-39, 40-99
+    // TXT.DAT format (verified against decrypted binary):
+    //   "speaker_code text" with the speaker code GLUED to the text
+    //   (no separating space). speaker_code is "-1" (narration) or a
+    //   2-digit value 00-99 (ally/enemy/named character id).
+    // Token markers inside text: AA..AA=ally name, BB..BB=enemy name,
+    //   CC..CC=item/tech, DD..DD=place, GG=protagonist (substituted before
+    //   render), TT=battle/place token, and "xx"=entry terminator.
     if (entry.empty()) {
         dialogue.text = entry;
         return dialogue;
     }
 
-    // Find first space to separate speaker code from text
-    size_t space_pos = entry.find(' ');
-    if (space_pos == std::string::npos) {
-        // No space found, entire entry is text
-        dialogue.text = entry;
-        return dialogue;
-    }
+    std::string body = entry;
 
-    // Extract speaker code
-    std::string speaker_str = entry.substr(0, space_pos);
-
-    // Parse speaker code
-    if (speaker_str == "-1") {
+    // Extract glued speaker code
+    if (entry.size() >= 2 && entry[0] == '-' && entry[1] == '1') {
         dialogue.speaker_id = -1;
-    } else {
+        body = entry.substr(2);
+    } else if (entry.size() >= 2 && std::isdigit(static_cast<unsigned char>(entry[0])) &&
+               std::isdigit(static_cast<unsigned char>(entry[1]))) {
         try {
-            dialogue.speaker_id = std::stoi(speaker_str);
+            dialogue.speaker_id = std::stoi(entry.substr(0, 2));
         } catch (...) {
-            dialogue.speaker_id = -1;  // Default to narrator on parse error
+            dialogue.speaker_id = -1;
         }
+        body = entry.substr(2);
+    }
+    // else: no speaker code (e.g. a bare "xx" terminator line) -> narrator
+
+    // Strip the "xx" terminator marker (ASCII, may be glued to end of text)
+    if (body.size() >= 2 && body[body.size() - 2] == 'x' && body[body.size() - 1] == 'x') {
+        body = body.substr(0, body.size() - 2);
+    }
+    if (body == "xx") {
+        body.clear();
     }
 
-    // Extract text (everything after first space)
-    dialogue.text = entry.substr(space_pos + 1);
-
+    dialogue.text = body;
     return dialogue;
 }
 

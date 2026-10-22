@@ -43,6 +43,7 @@ struct Event {
         GamepadButtonUp,
         GamepadAxis,
         MouseWheel,
+        TextInput,
     };
 
     Type type{Type::None};
@@ -65,6 +66,9 @@ struct Event {
     // Mouse wheel
     int32_t wheel_x{0};
     int32_t wheel_y{0};
+
+    // Text input (UTF-8)
+    char text[32]{};
 };
 
 // 纹理句柄 / Texture handle
@@ -92,6 +96,10 @@ public:
     virtual void draw_texture_rect(TextureHandle tex,
                                    int32_t dst_x, int32_t dst_y,
                                    int32_t dst_w, int32_t dst_h) = 0;
+    virtual void draw_texture_sub(TextureHandle tex,
+                                  int32_t src_x, int32_t src_y,
+                                  int32_t src_w, int32_t src_h,
+                                  int32_t dst_x, int32_t dst_y) = 0;
     virtual void destroy_texture(TextureHandle tex) = 0;
 
     virtual void draw_rect(int32_t x, int32_t y, int32_t w, int32_t h,
@@ -115,6 +123,10 @@ public:
 
     virtual void delay_ms(uint32_t ms) = 0;
     virtual uint32_t ticks_ms() = 0;
+
+    // 文本输入 / Text input
+    virtual void start_text_input() = 0;
+    virtual void stop_text_input() = 0;
 };
 
 std::unique_ptr<Platform> create_sdl3_platform();

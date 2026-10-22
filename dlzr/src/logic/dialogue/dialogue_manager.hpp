@@ -23,8 +23,13 @@ public:
     // 加载对话数据 / Load dialogue data
     void load_dialogues(const std::vector<std::string>& dialogue_texts);
 
-    // 初始化对话组表 / Initialize dialogue group table (from VA 0x446030)
-    void init_dialogue_groups();
+    // 从数据文件建立对话组索引 / Build dialogue group index from data file.
+    // 文件 dialogue_groups.bin：8 组 × [SubA 16×u32][SubB 16×u32]，零填充终止。
+    //   原版 EXE 组表实测位置 = 文件偏移 0x43c30（1024 字节，非文档误标的 0x446030）。
+    // 文件 dialogue_map.bin：16×u32 fight_txt 映射表（原版实测 0x46320，64 字节）。
+    //   与文档 0x448720 处给出的值 {0x22..0x63} 一致，已 byte-级核对。
+    // engine_data_dir：含上述两个 .bin 的目录（构建时随 exe 部署）。
+    void init_dialogue_groups(const std::string& engine_data_dir);
 
     // 获取指定对话组的SubA序列 / Get SubA sequence for a dialogue group
     const std::array<int32_t, 16>& get_sub_a(int32_t group_index) const;
@@ -70,16 +75,15 @@ private:
     std::vector<std::string> dialogues_;
     std::array<core::DialogueGroup, core::DIALOGUE_GROUP_COUNT> dialogue_groups_{};
 
-    // fight_txt → dialogue mapping table (from VA 0x448720)
-    // 16 entries: search for match, position determines dialogue group
-    static constexpr int32_t kFightTxtTable[16] = {
-        0x22, 0x23, 0x24, 0x26, 0x28, 0x29, 0x2A, 0x2C,
-        0x2E, 0x31, 0x32, 0x33, 0x35, 0x2B, 0x00, 0x63
-    };
+    // fight_txt → dialogue group 映射表（运行时从 dialogue_map.bin 载入，
+    // 原版实测 16 项：{0x22,0x23,0x24,0x26,0x28,0x29,0x2A,0x2C,
+    // 0x2E,0x31,0x32,0x33,0x35,0x2B,0x00,0x63}）。搜索命中取 position+2。
+    std::array<int32_t, 16> fight_txt_table_{};
 
     // 条件分支表 / Conditional branch table
     // [group][condition_type] = alternate_group
     // condition_type: 0=story_flags[0], 1=story_flags[2], 2=level_phase>0
+    // 注：此表为早期分析推断，尚未逐字节与原版核对（TODO）。
     static constexpr int32_t kConditionalBranches[8][3] = {
         {0, 0, 0},  // Group 0: no alternate
         {1, 7, 1},  // Group 1: if story_flags[0] → group 7, if level_phase>0 → group 1 (self-loop for phase)

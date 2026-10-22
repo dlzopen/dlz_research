@@ -14,8 +14,18 @@ namespace dlzr::logic {
 
 class BattleEngine {
 public:
-    void init(const core::FightData& fight, core::GameData& game,
+    void init(core::FightData& fight, core::GameData& game,
               int32_t difficulty_level = 1);
+
+    // 注入 MAP.DAT 地图（须在 init 前调用；地图尺寸决定战斗网格与相机边界）。
+    // 证据: FUN_0041e97a.c 以 MAP.DAT 宽高为相机钳制边界；
+    // FIGHT.DAT 单位坐标即 MAP.DAT 瓦片坐标。
+    void set_map(const core::FightMap* map) {
+        map_ = map;
+        if (fight_ != nullptr) {
+            init_grid();  // 已 init 后注入：按真实 MAP.DAT 尺寸重算网格与相机
+        }
+    }
 
     void execute_command(const BattleCommand& cmd);
 
@@ -39,6 +49,9 @@ public:
     int32_t get_attack_range(int32_t fighter_idx) const;
     int32_t get_movement_range(int32_t fighter_idx) const;
 
+    // 选中单位：记录选中索引并立即计算可达/攻击范围（与原版"选中即亮出可达区"一致）
+    void set_selected_fighter(int32_t idx);
+
     struct ScoreBreakdown {
         int32_t base{0};
         int32_t kill_bonus{0};
@@ -55,6 +68,7 @@ public:
 private:
     BattleState state_;
     const core::FightData* fight_{nullptr};
+    const core::FightMap* map_{nullptr};
     core::GameData* game_{nullptr};
     int32_t difficulty_level_{1};
     int32_t death_penalty_count_{0};

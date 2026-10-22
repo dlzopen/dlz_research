@@ -35,6 +35,10 @@ public:
     void draw_texture_rect(TextureHandle tex,
                            int32_t dst_x, int32_t dst_y,
                            int32_t dst_w, int32_t dst_h) override;
+    void draw_texture_sub(TextureHandle tex,
+                          int32_t src_x, int32_t src_y,
+                          int32_t src_w, int32_t src_h,
+                          int32_t dst_x, int32_t dst_y) override;
     void destroy_texture(TextureHandle tex) override;
 
     void draw_rect(int32_t x, int32_t y, int32_t w, int32_t h,
@@ -53,6 +57,9 @@ public:
 
     void delay_ms(uint32_t ms) override;
     uint32_t ticks_ms() override;
+
+    void start_text_input() override;
+    void stop_text_input() override;
 
     // 测试辅助 / Test helpers
     int32_t clear_count() const { return clear_count_; }

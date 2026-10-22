@@ -148,4 +148,38 @@ int32_t calc_damage(int32_t attack_power, int32_t defense) {
     return std::max(damage, 1);
 }
 
+int32_t get_item_attack_bonus(const core::People& person, const core::GameData& gd) {
+    int32_t best = 0;
+    int32_t cls = person.class_type;
+    for (int slot = 0; slot < 8; ++slot) {
+        uint8_t item_id = person.items[slot];
+        if (item_id == 0) continue;              // 空栏位跳过
+        uint32_t idx = static_cast<uint32_t>(item_id) - 1;  // uVar1 = item_id - 1
+        if (idx <= 0x50) continue;               // 仅装备：item_idx > 0x50 (ID > 0x51)
+        if (idx >= static_cast<uint32_t>(core::MAX_WUPIN)) continue;
+        if (cls < 0 || cls >= core::MAX_CLASS_TYPES) continue;
+        if (gd.wupin_compat[idx][cls] == 0) continue;  // 兵种不兼容此装备
+        int32_t bonus = gd.items[idx].para3;      // WuPin.para3 = 攻击加成
+        if (best < bonus) best = bonus;
+    }
+    return best;
+}
+
+int32_t get_item_defense_bonus(const core::People& person, const core::GameData& gd) {
+    int32_t best = 0;
+    int32_t cls = person.class_type;
+    for (int slot = 0; slot < 8; ++slot) {
+        uint8_t item_id = person.items[slot];
+        if (item_id == 0) continue;
+        uint32_t idx = static_cast<uint32_t>(item_id) - 1;
+        if (idx <= 0x50) continue;
+        if (idx >= static_cast<uint32_t>(core::MAX_WUPIN)) continue;
+        if (cls < 0 || cls >= core::MAX_CLASS_TYPES) continue;
+        if (gd.wupin_compat[idx][cls] == 0) continue;
+        int32_t bonus = gd.items[idx].para4;      // WuPin.para4 = 防御加成
+        if (best < bonus) best = bonus;
+    }
+    return best;
+}
+
 }  // namespace dlzr::logic

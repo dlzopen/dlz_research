@@ -25,7 +25,8 @@ public:
 
     void clear_cache();
 
-    static constexpr int32_t CHAR_WIDTH = 16;
+    static constexpr int32_t CHAR_WIDTH = 16;   // 全角（GBK）字宽
+    static constexpr int32_t ASCII_WIDTH = 8;   // 半角（ASCII）字宽
     static constexpr int32_t CHAR_HEIGHT = 16;
 
 private:
@@ -39,7 +40,7 @@ private:
     std::vector<uint8_t> hzk16_;
     std::vector<uint8_t> asc16_;
     std::unordered_map<std::string, CachedText> texture_cache_;
-    static constexpr size_t MAX_CACHE_ENTRIES = 256;
+    static constexpr size_t MAX_CACHE_ENTRIES = 1024;
 
     void render_glyph_16x16(uint8_t* dst, int32_t dst_w,
                              int32_t gx, int32_t gy,

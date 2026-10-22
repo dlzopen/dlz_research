@@ -16,12 +16,13 @@ void BattleInputHandler::init(int32_t grid_origin_x, int32_t grid_origin_y, int3
 
 int32_t BattleInputHandler::screen_to_grid_x(int32_t screen_x) const {
     if (screen_x < grid_origin_x_) return -1;
-    return (screen_x - grid_origin_x_) / cell_size_;
+    // 逆变换: screen = (grid - cam) * cell + origin  ⇒  grid = (screen - origin)/cell + cam
+    return (screen_x - grid_origin_x_) / cell_size_ + cam_x_;
 }
 
 int32_t BattleInputHandler::screen_to_grid_y(int32_t screen_y) const {
     if (screen_y < grid_origin_y_) return -1;
-    return (screen_y - grid_origin_y_) / cell_size_;
+    return (screen_y - grid_origin_y_) / cell_size_ + cam_y_;
 }
 
 int32_t BattleInputHandler::find_fighter_at_grid(int32_t grid_x, int32_t grid_y,
@@ -59,6 +60,13 @@ int32_t BattleInputHandler::hit_test_menu(int32_t screen_x, int32_t screen_y) co
 logic::BattleCommand BattleInputHandler::process_event(const platform::Event& event,
                                                         const logic::BattleState& state) {
     logic::BattleCommand cmd;
+
+    // 使用引擎计算的屏幕自适应布局（与渲染器共用，保证"点哪=画哪"）
+    grid_origin_x_ = state.grid_origin_x;
+    grid_origin_y_ = state.grid_origin_y;
+    cell_size_ = state.cell_size;
+    cam_x_ = state.cam_x;
+    cam_y_ = state.cam_y;
 
     if (event.type == platform::Event::Type::KeyDown) {
         if (event.key == 0x1B) {
@@ -205,8 +213,8 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
             int32_t grid_x = screen_to_grid_x(event.mouse_x);
             int32_t grid_y = screen_to_grid_y(event.mouse_y);
             if (grid_x >= 0 && grid_y >= 0 &&
-                grid_x < logic::BattleState::GRID_COLS &&
-                grid_y < logic::BattleState::GRID_ROWS) {
+                grid_x < state.map_width &&
+                grid_y < state.map_height) {
                 int32_t target = find_fighter_at_grid(grid_x, grid_y, state);
                 if (target >= 0 && state.fighters[target].team != 0) {
                     cmd.type = logic::BattleCommand::ATTACK;
@@ -228,8 +236,8 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
             int32_t grid_x = screen_to_grid_x(event.mouse_x);
             int32_t grid_y = screen_to_grid_y(event.mouse_y);
             if (grid_x >= 0 && grid_y >= 0 &&
-                grid_x < logic::BattleState::GRID_COLS &&
-                grid_y < logic::BattleState::GRID_ROWS) {
+                grid_x < state.map_width &&
+                grid_y < state.map_height) {
                 cmd.type = logic::BattleCommand::SKILL;
                 cmd.fighter_idx = selected_fighter_;
                 cmd.skill_idx = pending_skill_idx_;
@@ -256,8 +264,8 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
             int32_t grid_x = screen_to_grid_x(event.mouse_x);
             int32_t grid_y = screen_to_grid_y(event.mouse_y);
             if (grid_x >= 0 && grid_y >= 0 &&
-                grid_x < logic::BattleState::GRID_COLS &&
-                grid_y < logic::BattleState::GRID_ROWS) {
+                grid_x < state.map_width &&
+                grid_y < state.map_height) {
                 cmd.type = logic::BattleCommand::USE_ITEM;
                 cmd.fighter_idx = selected_fighter_;
                 cmd.item_idx = pending_item_idx_;
@@ -285,8 +293,8 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                 int32_t grid_x = screen_to_grid_x(event.mouse_x);
                 int32_t grid_y = screen_to_grid_y(event.mouse_y);
                 if (grid_x >= 0 && grid_y >= 0 &&
-                    grid_x < logic::BattleState::GRID_COLS &&
-                    grid_y < logic::BattleState::GRID_ROWS) {
+                    grid_x < state.map_width &&
+                    grid_y < state.map_height) {
                     cmd.type = logic::BattleCommand::MOVE;
                     cmd.fighter_idx = selected_fighter_;
                     cmd.target_x = grid_x;
@@ -305,8 +313,8 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                 int32_t grid_x = screen_to_grid_x(event.mouse_x);
                 int32_t grid_y = screen_to_grid_y(event.mouse_y);
                 if (grid_x >= 0 && grid_y >= 0 &&
-                    grid_x < logic::BattleState::GRID_COLS &&
-                    grid_y < logic::BattleState::GRID_ROWS) {
+                    grid_x < state.map_width &&
+                    grid_y < state.map_height) {
                     cmd.type = logic::BattleCommand::PLACE_MINE;
                     cmd.fighter_idx = selected_fighter_;
                     cmd.target_x = grid_x;
@@ -325,7 +333,7 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
         int32_t grid_y = screen_to_grid_y(event.mouse_y);
 
         if (grid_x < 0 || grid_y < 0) return cmd;
-        if (grid_x >= logic::BattleState::GRID_COLS || grid_y >= logic::BattleState::GRID_ROWS) return cmd;
+        if (grid_x >= state.map_width || grid_y >= state.map_height) return cmd;
 
         if (event.mouse_button == 1) {
             int32_t clicked_fighter = find_fighter_at_grid(grid_x, grid_y, state);
@@ -347,12 +355,22 @@ logic::BattleCommand BattleInputHandler::process_event(const platform::Event& ev
                     state_ = State::IDLE;
                     selected_fighter_ = -1;
                 } else {
-                    cmd.type = logic::BattleCommand::MOVE;
-                    cmd.fighter_idx = selected_fighter_;
-                    cmd.target_x = grid_x;
-                    cmd.target_y = grid_y;
-                    state_ = State::IDLE;
-                    selected_fighter_ = -1;
+                    // 仅当目标格在可达集内（movement_mask）才移动；点非可达格视为无效点击，保持选中
+                    // 与原版一致：选中后"变亮区域"才可移动，点非亮区无效
+                    int32_t cell = grid_y * state.map_width + grid_x;
+                    bool reachable = (cell >= 0 &&
+                                      cell < state.map_width * state.map_height)
+                                     && state.movement_mask[cell];
+                    bool occupied = (clicked_fighter >= 0);
+                    if (reachable && !occupied) {
+                        cmd.type = logic::BattleCommand::MOVE;
+                        cmd.fighter_idx = selected_fighter_;
+                        cmd.target_x = grid_x;
+                        cmd.target_y = grid_y;
+                        state_ = State::IDLE;
+                        selected_fighter_ = -1;
+                    }
+                    // else: 点非可达格 -> 保持选中（无效点击）
                 }
             }
         } else if (event.mouse_button == 3) {

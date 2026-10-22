@@ -26,7 +26,10 @@ public:
                                          int32_t& selected_formation,
                                          int32_t& slider_value,
                                          int32_t& difficulty,
-                                         std::string& player_name);
+                                         std::string& player_name,
+                                         int32_t& hovered_button,
+                                         int32_t& pressed_button,
+                                         bool& slider_dragging);
 
 private:
     // Portrait click regions
@@ -39,8 +42,8 @@ private:
     static constexpr int32_t FORMATION_X[4] = {163, 251, 339, 427};
     static constexpr int32_t FORMATION_SIZE = 48;
 
-    // Slider click region
-    static constexpr int32_t SLIDER_X = 255;
+    // Slider click region (RE: clickable start=269, width=0x80=128)
+    static constexpr int32_t SLIDER_X = 269;
     static constexpr int32_t SLIDER_Y = 287;
     static constexpr int32_t SLIDER_WIDTH = 128;
     static constexpr int32_t SLIDER_HEIGHT = 16;
@@ -51,8 +54,8 @@ private:
     static constexpr int32_t DIFFICULTY_WIDTH = 344;
     static constexpr int32_t DIFFICULTY_HEIGHT = 22;
 
-    // Button click regions
-    static constexpr int32_t BUTTON_Y = 425;
+    // Button click regions (RE: Y positions 425, 426, 427)
+    static constexpr int32_t BUTTON_Y_BASE = 425;
     static constexpr int32_t BUTTON_X[3] = {138, 275, 412};
     static constexpr int32_t BUTTON_WIDTH = 88;
     static constexpr int32_t BUTTON_HEIGHT = 32;

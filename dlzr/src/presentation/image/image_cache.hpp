@@ -17,6 +17,12 @@ public:
     void draw_image(const std::string& name, int32_t x, int32_t y);
     void draw_image(const std::string& name, int32_t x, int32_t y,
                     int32_t w, int32_t h);
+    void draw_image(const std::string& name, int32_t dst_x, int32_t dst_y,
+                    int32_t src_x, int32_t src_y,
+                    int32_t src_w, int32_t src_h);
+    void draw_image_with_transparent_color(const std::string& name,
+                                           int32_t x, int32_t y,
+                                           uint8_t transparent_color_index);
 
     int32_t image_width(const std::string& name);
     int32_t image_height(const std::string& name);

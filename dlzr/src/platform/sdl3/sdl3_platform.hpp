@@ -20,6 +20,7 @@
 #endif
 
 #include <unordered_map>
+#include <vector>
 
 namespace dlzr::platform {
 
@@ -45,6 +46,10 @@ public:
     void draw_texture_rect(TextureHandle tex,
                            int32_t dst_x, int32_t dst_y,
                            int32_t dst_w, int32_t dst_h) override;
+    void draw_texture_sub(TextureHandle tex,
+                          int32_t src_x, int32_t src_y,
+                          int32_t src_w, int32_t src_h,
+                          int32_t dst_x, int32_t dst_y) override;
     void destroy_texture(TextureHandle tex) override;
 
     void draw_rect(int32_t x, int32_t y, int32_t w, int32_t h,
@@ -66,6 +71,9 @@ public:
     void delay_ms(uint32_t ms) override;
     uint32_t ticks_ms() override;
 
+    void start_text_input() override;
+    void stop_text_input() override;
+
 private:
     SDL_Window* window_{nullptr};
     SDL_Renderer* renderer_{nullptr};
@@ -77,6 +85,14 @@ private:
 #endif
     std::unordered_map<TextureHandle, SDL_Texture*> textures_;
     TextureHandle next_texture_{1};
+
+    // 延迟销毁：SDL3 D3D11 后端在 present 时把"已销毁"纹理加入 zombie 列表并立即释放。
+    // 若同一帧内刚绘制过的纹理被立即销毁，present 提交的渲染批次仍引用它，
+    // 释放即触发 RtlFreeHeap 堆损坏崩溃。故实际释放延后 2 帧，待在途批次退役。
+    std::vector<SDL_Texture*> deferred_destroy_[3];
+    int destroy_gen_{0};
+
+    void flush_deferred_destroy();
 
     struct SoundInstance {
         SDL_AudioStream* stream{nullptr};

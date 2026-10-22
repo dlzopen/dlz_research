@@ -28,6 +28,12 @@ struct GameData {
     std::array<Material, 10> materials;
     DiLeiRecipe mine_recipe;
 
+    // 兵种×物品装备兼容性矩阵 / Class × item equipment compatibility matrix
+    // RE: battle_config_3 @ 0x95EB88, layout = WuPinValid (160 rows × 96 bytes)
+    // GAME.DAT 末尾 15360 字节 / last 15360 bytes of GAME.DAT
+    // wupin_compat[item_idx][class_type] != 0 表示该兵种可使用此物品
+    std::array<std::array<uint8_t, MAX_CLASS_TYPES>, MAX_WUPIN> wupin_compat{};
+
     // FIGHT.DAT: 每关数据按需加载，不全部驻留内存
     // Fight data loaded on demand per battle, not all resident
 
@@ -124,6 +130,22 @@ struct GameData {
     // 锻造系统运行时 / Forging system runtime
     std::array<int32_t, 10> material_inventory{};   // 材料库存 / Material stock
     std::array<std::array<int16_t, 10>, 4> crafted_stock{};  // 4页×10物品 / 4 tabs × 10 items
+
+    // 主角运行态 / Protagonist runtime state (set on CHARACTER_SELECT confirm)
+    // 玩家在角色选择界面修改的主角名（对应对话令牌 GG 的替换值）
+    // Player-edited protagonist name (replacement for dialogue token GG)
+    std::string protagonist_name{"\xD6\xF7\xBD\xC7"};  // 默认"主角" (GBK)
+    // 主角头像索引 / Protagonist portrait index (FACE.DAT, hero slot 103+idx)
+    int32_t protagonist_face{-1};
+    // 主角兵种索引 / Protagonist class type, derived from formation selection {1,4,8,11}
+    // 原版确认路径(FUN_0042e2d6)按阵型把兵种索引写入 People[0].class_type
+    int32_t protagonist_class_type{1};
+    // 主角武力 / Protagonist strength (from 武力 slider, 原版 DAT_007d0f14)
+    int32_t protagonist_strength{80};
+    // 主角智力 / Protagonist intelligence = 160 - 武力 (原版 DAT_007d0f18 = 0xa0 - 武力)
+    int32_t protagonist_intelligence{80};
+    // 主角等级 / Protagonist level（战役起始等级；完整升级系统待实现，先用此占位）。
+    int32_t protagonist_level{10};
 };
 
 // ============================================================

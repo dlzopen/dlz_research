@@ -65,55 +65,89 @@ const char* exception_code_name(DWORD code) {
     }
 }
 
+// 解析单帧的 "module!offset"（RVA）。不依赖 dbghelp，崩溃态下也稳定可用。
+void print_module_offset(void* addr) {
+    HMODULE hmod = nullptr;
+    // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS：按地址反查所属模块句柄。
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(addr), &hmod) &&
+        hmod != nullptr) {
+        wchar_t path[MAX_PATH] = {0};
+        DWORD len = GetModuleFileNameW(hmod, path, MAX_PATH);
+        const wchar_t* base = path;
+        for (const wchar_t* p = path; *p; ++p) {
+            if (*p == L'\\' || *p == L'/') base = p + 1;
+        }
+        if (len == 0) base = L"<unknown>";
+        crash_printf("  %ls+0x%llx", base,
+                     static_cast<unsigned long long>(
+                         reinterpret_cast<uintptr_t>(addr) -
+                         reinterpret_cast<uintptr_t>(hmod)));
+    } else {
+        crash_printf("  %p", addr);
+    }
+}
+
 void print_stack_trace() {
     void* frames[kMaxFrames];
     USHORT captured = CaptureStackBackTrace(0, kMaxFrames, frames, nullptr);
 
     HANDLE process = GetCurrentProcess();
-    if (!SymInitialize(process, nullptr, TRUE)) {
-        crash_printf("  (SymInitialize failed, raw addresses only)\n");
-        for (USHORT i = 0; i < captured; ++i) {
-            crash_printf("  #%u  %p\n", i, frames[i]);
-        }
-        return;
+
+    // 先把 exe 所在目录设为符号搜索路径，最大化 PDB 命中率。
+    wchar_t exe_path[MAX_PATH] = {0};
+    GetModuleFileNameW(GetModuleHandleW(nullptr), exe_path, MAX_PATH);
+    wchar_t exe_dir[MAX_PATH] = {0};
+    wcsncpy_s(exe_dir, exe_path, wcslen(exe_path));
+    wchar_t* slash = wcsrchr(exe_dir, L'\\');
+    if (slash) *slash = L'\0';
+
+    bool sym_ok = false;
+    if (SymInitialize(process, nullptr, FALSE)) {
+        sym_ok = true;
+        SymSetSearchPathW(process, exe_dir);
+        // 重新枚举已加载模块的符号（fInvadeProcess=FALSE 时需手动加载）。
+        SymRefreshModuleList(process);
     }
 
-    SYMBOL_INFO* symbol = static_cast<SYMBOL_INFO*>(
-        calloc(sizeof(SYMBOL_INFO) + 256, 1));
-    if (!symbol) {
-        SymCleanup(process);
-        for (USHORT i = 0; i < captured; ++i) {
-            crash_printf("  #%u  %p\n", i, frames[i]);
+    SYMBOL_INFO* symbol = nullptr;
+    if (sym_ok) {
+        symbol = static_cast<SYMBOL_INFO*>(calloc(sizeof(SYMBOL_INFO) + 256, 1));
+        if (symbol) {
+            symbol->MaxNameLen = 255;
+            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
         }
-        return;
     }
-    symbol->MaxNameLen = 255;
-    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 
-    DWORD64 displacement = 0;
     IMAGEHLP_LINE64 line;
     line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
 
     for (USHORT i = 0; i < captured; ++i) {
         DWORD64 addr = reinterpret_cast<DWORD64>(frames[i]);
 
-        BOOL has_symbol = SymFromAddr(process, addr, &displacement, symbol);
-        DWORD line_disp = 0;
-        BOOL has_line = SymGetLineFromAddr64(process, addr, &line_disp, &line);
+        // 始终先打印 module!offset（RVA），保证崩溃态下也有可解析信息。
+        print_module_offset(frames[i]);
 
-        if (has_symbol && has_line) {
-            crash_printf("  #%u  %s  (%s:%lu)\n",
-                         i, symbol->Name, line.FileName, line.LineNumber);
-        } else if (has_symbol) {
-            crash_printf("  #%u  %s+0x%llx  (%p)\n",
-                         i, symbol->Name, displacement, frames[i]);
-        } else {
-            crash_printf("  #%u  %p\n", i, frames[i]);
+        if (sym_ok && symbol) {
+            DWORD64 displacement = 0;
+            BOOL has_symbol = SymFromAddr(process, addr, &displacement, symbol);
+            DWORD line_disp = 0;
+            BOOL has_line = SymGetLineFromAddr64(process, addr, &line_disp, &line);
+            if (has_symbol && has_line) {
+                crash_printf("  <- %s  (%s:%lu)\n", symbol->Name,
+                             line.FileName, line.LineNumber);
+                continue;
+            } else if (has_symbol) {
+                crash_printf("  <- %s+0x%llx\n", symbol->Name, displacement);
+                continue;
+            }
         }
+        crash_printf("\n");
     }
 
-    free(symbol);
-    SymCleanup(process);
+    if (symbol) free(symbol);
+    if (sym_ok) SymCleanup(process);
 }
 
 void write_crash_header(const char* context) {
