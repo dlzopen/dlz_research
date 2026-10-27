@@ -133,12 +133,13 @@ TEST_F(EnemyAiDispatchTest, Behavior1LowHpRetreats) {
     }
 }
 
-// —— behavior=1 满血满士气 + 敌在射程 → 列序走到无条件攻击 → ATTACK ——
-TEST_F(EnemyAiDispatchTest, Behavior1FullHpAttacksWhenEnemyInRange) {
+// —— behavior=1 满血满士气 + 敌在射程 → 列0/1 门控不成立，列2 ai_type=22(纯移动)生效 → MOVE ——
+// 二进制 behavior 1 为防御型（撤退/移动/技能），满血无门控时绝不普攻；此前副本误因
+// 22→skill→NONE 漏过、42→attack 误触发"攻击"。忠实行为应为移动(MOVE)。
+TEST_F(EnemyAiDispatchTest, Behavior1FullHpMovesWhenEnemyInRange) {
     auto cmd = dispatch(40, 99, 1, 100, 100, 100, 1, 0);
-    EXPECT_EQ(cmd.type, BattleCommand::ATTACK)
-        << "behavior=1 满血且敌在射程应攻击(列序 ai_type=42/52/72/31)";
-    EXPECT_EQ(cmd.target_idx, 99);
+    EXPECT_EQ(cmd.type, BattleCommand::MOVE)
+        << "behavior=1 满血无门控时 ai_type=22(纯移动)生效应移动(MOVE)，二进制不普攻";
 }
 
 // —— behavior=1 仅低士气(morale<25) → 列1 ai_type=11 撤退(MOVE) ——
@@ -148,11 +149,13 @@ TEST_F(EnemyAiDispatchTest, Behavior1LowMoraleRetreats) {
         << "behavior=1 仅低士气(morale<25)应触发撤退(MOVE)";
 }
 
-// —— behavior=0 满血满士气且敌在射程外 → 全列不成立 → 待命(WAIT) ——
-TEST_F(EnemyAiDispatchTest, Behavior0NoColumnFiresWaits) {
+// —— behavior=0 满血满士气+敌在远处 → 列0/1 门控不成立，列2 ai_type=21(纯移动)生效 → MOVE ——
+// 二进制 FUN_00402ddc case 0x15=21：23c=1 纯移动，无 hp/士气门控；此前副本误因
+// 21→skill→NONE→WAIT。忠实行为应为朝目标移动(MOVE)。
+TEST_F(EnemyAiDispatchTest, Behavior0FullHpMovesWhenEnemyFar) {
     auto cmd = dispatch(40, 99, 0, 100, 100, 100, 14, 14);
-    EXPECT_EQ(cmd.type, BattleCommand::WAIT)
-        << "behavior=0 满血且敌在射程外，所有列不成立应待命";
+    EXPECT_EQ(cmd.type, BattleCommand::MOVE)
+        << "behavior=0 满血满士气时 ai_type=21(纯移动)在列2生效应移动(MOVE)，非待命";
 }
 
 // —— 列回退：behavior=0 满血但 morale<60 → 列0 ai_type=2 不成立，列1 ai_type=12 成立 → ATTACK ——
@@ -162,12 +165,12 @@ TEST_F(EnemyAiDispatchTest, Behavior0ColumnFallbackToMoraleGate) {
         << "behavior=0 满血但 morale<60 应回退到列1(ai_type=12)攻击";
 }
 
-// —— behavior=12（激进型，列0=ai_type=31 无条件攻击）→ 敌在射程即 ATTACK ——
-TEST_F(EnemyAiDispatchTest, Behavior12UnconditionalAttack) {
+// —— behavior=12 满血满士气+敌在射程 → 列0 ai_type=31 需技能旗标(默认无)回退，列6 ai_type=21(纯移动)生效 → MOVE ——
+// 二进制 FUN_00402ddc case 0x1f=31：gate DAT_007d0f68≠0；默认无技能旗标→回退，最终纯移动。
+TEST_F(EnemyAiDispatchTest, Behavior12MovesWhenNoSkill) {
     auto cmd = dispatch(40, 99, 12, 100, 100, 100, 1, 0);
-    EXPECT_EQ(cmd.type, BattleCommand::ATTACK)
-        << "behavior=12 列0=ai_type=31 无条件攻击，敌在射程应 ATTACK";
-    EXPECT_EQ(cmd.target_idx, 99);
+    EXPECT_EQ(cmd.type, BattleCommand::MOVE)
+        << "behavior=12 无技能旗标时 ai_type=21(纯移动)在列6生效应移动(MOVE)";
 }
 
 // —— behavior=2 低士气(morale<25) → 列0 ai_type=1 不成立 → 列1 ai_type=11 撤退 → MOVE ——
@@ -190,25 +193,30 @@ TEST_F(EnemyAiDispatchTest, Behavior11EmptyRowWaits) {
 // 诚实残留：具体选择规则（lowest-HP 启发式 vs 威胁索引/可达扫描）机制不同，见当日记忆。
 
 // 唯一在射程内敌人 → 必须攻击该敌人（无歧义，任何重刻必满足）。
+// 用忠实攻击型 ai_type=2（原地攻，hp<60% 门控）；behavior=12 二进制实为纯移动，故改直驱 ai_type=2。
 TEST_F(EnemyAiDispatchTest, SingleInRangeTargetIsAttacked) {
-    auto cmd = dispatch(40, 99, 12, 100, 100, 100, 1, 0);  // behavior=12 col0=ai_type31 无条件攻
-    EXPECT_EQ(cmd.type, BattleCommand::ATTACK);
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 50, 100, 100, {{99, 1, 0}});  // hp=50<60%
+    BattleCommand cmd = dispatch_type(40, 2);
+    ASSERT_EQ(cmd.type, BattleCommand::ATTACK);
     EXPECT_EQ(cmd.target_idx, 99)
         << "射程内唯一敌人必须被选中为攻击目标";
 }
 
 // 无敌人可攻击（远距）→ 不发起攻击（不越界/不选错目标）。
 TEST_F(EnemyAiDispatchTest, NoTargetInRangeDoesNotAttack) {
-    auto cmd = dispatch(40, 99, 12, 100, 100, 100, 14, 14);  // 远距≈20格
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 50, 100, 100, {{99, 14, 14}});  // 远距≈20格
+    BattleCommand cmd = dispatch_type(40, 2);
     EXPECT_NE(cmd.type, BattleCommand::ATTACK)
         << "射程外不应发起攻击";
 }
 
 // 两个在射程内敌人 → 确定性选中有效其一（不选中自己/友军/越界）。
 TEST_F(EnemyAiDispatchTest, MultipleInRangeTargetsDeterministicValid) {
-    fight_.fighters[40].behavior = 12;
-    setup_duel(40, 100, 100, 100, {{98, 1, 0}, {99, -1, 0}});
-    auto cmd = gen_cmd(40);
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 50, 100, 100, {{98, 1, 0}, {99, -1, 0}});  // hp=50<60%
+    BattleCommand cmd = dispatch_type(40, 2);
     ASSERT_EQ(cmd.type, BattleCommand::ATTACK);
     EXPECT_TRUE(cmd.target_idx == 98 || cmd.target_idx == 99)
         << "多目标时须选中有效在射程敌人之一";
@@ -261,6 +269,43 @@ TEST_F(EnemyAiDispatchTest, SupportAiTypeFallsBackWhenNoInjuredAlly) {
     BattleCommand cmd = dispatch_type(40, 7);
     EXPECT_EQ(cmd.type, BattleCommand::NONE)
         << "ai_type 7 无受伤友军时必须回退(NONE)，不得误击/误动";
+}
+
+// ===================== 派发类别忠实性闸门（backlog ① 重分类后） =====================
+// 锁"每个 ai_type 的动作类别"可观测契约，闭合 FUN_00402ddc 动作编码与副本
+// dispatch_ai_type 的类别错配（此前 3→MOVE / 21·22·23→SKILL / 31·42·52·72→ATTACK）。
+// 注：具体技能 id(0xc/0xd/0xe/6/0xf) 与威胁旗标门控为 Tier-B 近似，不在本闸门范围。
+
+// ai_type=3 为原地攻(230=0,23c=2)，hp≠max 时必须 ATTACK（此前误路由 ai_guard=MOVE）。
+TEST_F(EnemyAiDispatchTest, AiType3AttacksInPlaceWhenHpNotFull) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 50, 100, 100, {{99, 1, 0}});  // hp=50<max → 门控成立
+    BattleCommand cmd = dispatch_type(40, 3);
+    ASSERT_EQ(cmd.type, BattleCommand::ATTACK)
+        << "ai_type=3 为原地攻，hp≠max 时应 ATTACK（此前误路由 ai_guard=MOVE）";
+    EXPECT_EQ(cmd.target_idx, 99);
+}
+
+// ai_type=21 为纯移动(23c=1)，绝不可为技能 SKILL（此前 misrouting 之错）。
+TEST_F(EnemyAiDispatchTest, AiType21PureMoveNotSkill) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {{99, 5, 5}});  // 敌存在，触发纯移动
+    BattleCommand cmd = dispatch_type(40, 21);
+    EXPECT_NE(cmd.type, BattleCommand::SKILL)
+        << "ai_type=21 为纯移动(23c=1)，绝不可为技能 SKILL（此前 misrouting 之错）";
+    EXPECT_EQ(cmd.type, BattleCommand::MOVE)
+        << "ai_type=21 应朝目标移动(MOVE)";
+}
+
+// ai_type=31 为技能(0xf,23c=2)，持有技能旗标时应 SKILL 而非普攻 ATTACK。
+TEST_F(EnemyAiDispatchTest, AiType31SkillNotAttackWhenSkillAvailable) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {{99, 1, 0}});  // 敌在射程
+    fight_.people[40].skill_fire = 1;  // 持有火攻技能旗标(近似 DAT_007d0f68≠0)
+    BattleCommand cmd = dispatch_type(40, 31);
+    ASSERT_EQ(cmd.type, BattleCommand::SKILL)
+        << "ai_type=31 为技能(0xf)，持有技能旗标时应 SKILL，而非普攻 ATTACK";
+    EXPECT_NE(cmd.skill_idx, 0) << "技能索引须有效";
 }
 
 }  // namespace dlzr::logic

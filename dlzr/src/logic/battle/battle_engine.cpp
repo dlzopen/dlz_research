@@ -1082,10 +1082,16 @@ BattleCommand BattleEngine::generate_enemy_command(int32_t fighter_idx) {
     return wait;
 }
 
-// 复刻 FUN_00402ddc 的单个 ai_type 分支。触发条件满足→返回对应动作；
-// 否则返回 NONE（上层回退到表的下一列）。动作执行复用已验证的执行器
-// （ai_attack_in_place / ai_guard / ai_retreat / ai_try_skill），这些执行器
-// 的移动可达集/伤害已分别由 test_movement_range / test_combat_formula_anchors 锁定。
+// 复刻 FUN_00402ddc 的单个 ai_type 分支（动作类别严格对齐二进制 DAT_0044b230/23c 编码）：
+//   ATTACK(原地攻) → ai_attack_in_place  (ai_type 2/3/12/13)
+//   MOVE+攻击      → ai_guard            (ai_type 4/5/14/15/32/33)
+//   纯移动(23c=1)  → ai_chase            (ai_type 21/22/23)
+//   SKILL(技能)    → ai_try_skill        (ai_type 31/41/42/51/52/61/71/72)
+//   支援(同队)     → ai_support_ally      (ai_type 7/8/17/18)
+//   撤退           → ai_retreat           (ai_type 1/6/11/16)
+//   待命           → WAIT                (ai_type 0)
+// 触发条件(门控)满足→返回对应动作；否则返回 NONE（上层回退到 kAiDispatchTable 的下一列）。
+// 各执行器的移动可达集/伤害已由 test_movement_range / test_combat_formula_anchors 锁定。
 BattleCommand BattleEngine::dispatch_ai_type(int32_t fighter_idx, int ai_type) {
     BattleCommand none;
     none.type = BattleCommand::NONE;
@@ -1122,40 +1128,45 @@ BattleCommand BattleEngine::dispatch_ai_type(int32_t fighter_idx, int ai_type) {
     case 16: // morale != 100
         if (morale_notfull) return ai_retreat(fighter_idx);
         return none;
-    // —— 移动到固定坐标类（FUN_0040124c / 守卫点）——
-    case 3:  // hp != max → 移到守卫点（原地不动=待命）
-    case 4:  // hp != max → 移到固定坐标
-    case 14: // morale != 100 → 移到固定坐标
-    case 32: // 移到选定坐标（FUN_0040124c）
-    case 33: // 移到选定坐标
-        if ((ai_type == 3 || ai_type == 4) ? hp_damaged : morale_notfull) {
-            return ai_guard(fighter_idx);  // ai_guard 复用：朝 target_pos 步进, 在射程内则攻
-        }
-        return none;
-    // —— 技能类（DAT_0044b23c=1）——
-    case 21: case 22: case 23:
-    case 41: case 51: case 61: case 71:
-        return ai_try_skill(fighter_idx);
-    // —— 攻击类（原地攻击 DAT_0044b230=0 / 选定目标）——
-    case 2:  // hp < 60%
+    // —— 攻击类（原地攻击 DAT_0044b230=0，攻击选定威胁；干净层 ai_attack_in_place）——
+    // 二进制 ai_type 2(hp<60%)/3(hp≠max)/12(morale<60%)/13(morale≠100) 为原地攻
+    // （FUN_00402ddc case 2/3/0xc/0xd：230=0,23c=2，攻威胁槽位，不移动）。
+    case 2:
         if (hp_lt(3, 5)) return ai_attack_in_place(fighter_idx);
         return none;
-    case 5:  // hp != max → 攻选定目标点
+    case 3:
         if (hp_damaged) return ai_attack_in_place(fighter_idx);
         return none;
-    // 支援类（同队扫描 FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44：
-    // 选中友军格 + 施放支援技能；干净层以 ai_support_ally 治疗受伤友军近似）
-    case 7: case 8: case 17: case 18:
-        return ai_support_ally(fighter_idx);
-    // 选定目标即攻（无 hp/士气门控：FUN_00401fff/FUN_00402b3c 等敌方 chooser）
-    case 31: case 42: case 52: case 72:
-        return ai_attack_in_place(fighter_idx);
-    case 12: // morale < 60
+    case 12:
         if (morale_low60) return ai_attack_in_place(fighter_idx);
         return none;
-    case 13: case 15: // morale != 100 → 攻选定目标点
+    case 13:
         if (morale_notfull) return ai_attack_in_place(fighter_idx);
         return none;
+    // —— 移动+攻击类（DAT_0044b230=1/23c=2，移到固定/选定坐标并攻；干净层 ai_guard 朝目标步进）——
+    // 二进制 ai_type 4/5(hp≠max)/14/15(morale≠100)/32/33(坐标有效) 为"移到坐标±攻"。
+    case 4: case 5:
+        if (hp_damaged) return ai_guard(fighter_idx);
+        return none;
+    case 14: case 15:
+        if (morale_notfull) return ai_guard(fighter_idx);
+        return none;
+    case 32: case 33:
+        return ai_guard(fighter_idx);
+    // —— 纯移动类（DAT_0044b23c=1，无攻/技；干净层 ai_chase 朝最近敌人步进）——
+    // 二进制 ai_type 21/22/23 = 纯移动到选定/跟随单位格（FUN_00402adc/00402967/00402b3c，
+    // 23c=1 仅移动），绝不可路由到技能。此前误路由 ai_try_skill 属类别错配。
+    case 21: case 22: case 23:
+        return ai_chase(fighter_idx);
+    // —— 技能类（DAT_0044b23c=1/2，技能 id 0xc/0xd/0xe/6/0xf；干净层 ai_try_skill 按可用旗标择一）——
+    // 二进制 ai_type 31(0xf)/41(0xd)/42(0xd)/51(0xe)/52(0xe)/61(0xc)/71(6)/72(6) 为技能，
+    // 此前误路由 ai_attack_in_place 属类别错配（二进制技能非普攻）。
+    case 31: case 41: case 42: case 51: case 52: case 61: case 71: case 72:
+        return ai_try_skill(fighter_idx);
+    // —— 支援类（同队扫描 FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44：
+    // 选中友军格 + 施放支援技能；干净层以 ai_support_ally 治疗受伤友军近似）——
+    case 7: case 8: case 17: case 18:
+        return ai_support_ally(fighter_idx);
     default:
         return none;
     }
