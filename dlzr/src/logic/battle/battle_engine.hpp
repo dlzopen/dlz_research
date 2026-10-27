@@ -130,6 +130,10 @@ private:
     BattleCommand ai_patrol(int32_t fighter_idx);
     BattleCommand ai_guard(int32_t fighter_idx);
     BattleCommand ai_assist(int32_t fighter_idx);
+    // 支援类 ai_type（7/8/17/18）：二进制 FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44
+    // 以同队扫描选中友军格后施放支援技能（治疗/增益）。干净层以"治疗受伤友军(medical,
+    // skill_idx=3)"近似；无 medical 技能或无受伤友军 → 返回 NONE（上层回退到下一列）。
+    BattleCommand ai_support_ally(int32_t fighter_idx);
     BattleCommand ai_ambush(int32_t fighter_idx);
     BattleCommand ai_chase(int32_t fighter_idx);
     BattleCommand ai_retreat(int32_t fighter_idx);

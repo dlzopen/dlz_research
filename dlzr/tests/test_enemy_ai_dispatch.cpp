@@ -20,10 +20,12 @@
 //   原版 chooser 体系（FUN_00402ddc 调用图）与副本启发式机制不同——
 //     · ai_type 2/3/12/13 用 FUN_00401697/FUN_004016ce：返回威胁索引 0/2 或 1/2
 //       （读 per-fighter DAT_007d0f2c/0x34/0x30 旗标，非扫描）。
-//     · ai_type 7/17/42/52/72 用 FUN_004018fb/FUN_00401c73/FUN_00401fff：
-//       425B 同构扫描器，洪泛可达格(FUN_00418e29)后"自上而下、自左而右"取首个
-//       命中敌人的格（per-cell 评估 FUN_00401708/FUN_00401aa4/FUN_00401e1c，
-//       后者用技能形状戳 FUN_00418a70 + 单位栅 DAT_0057bf10/11）。
+//     · ai_type 7/8/17/18 用 FUN_004018fb/FUN_00401c73（per-cell FUN_00401708/01aa4 同队过滤）：
+//       支援/治疗目标选择器（移动到友军格+施放，非攻击敌人）。
+//     · ai_type 42/52/72 用 FUN_00401fff（per-cell FUN_00401e1c 异队过滤，带 level+5<=self_lv 门槛）：
+//       敌方技能攻击选择器（技能 id 0xd/0xe/6）。
+//       三者均洪泛可达格(FUN_00418e29)后"y外x内"扫描首可达格、9×9 戳 FUN_00418a70(DAT_0057ba5c+DAT_00475be8)
+//       经单位栅 DAT_0057bf10/11 判占驻（已勘误：FUN_004018fb 为同队/支援，非敌方攻击）。
 //   副本当前用 lowest-HP 启发式（见 battle_engine.cpp:find_best_attack_target）。
 //   本测试的攻击选择闸门只锁"有效目标"契约（任何忠实重刻必满足），不锁具体
 //   选择规则；具体机制差异记录于当日记忆 .workbuddy/memory/YYYY-MM-DD.md。
@@ -109,6 +111,15 @@ protected:
     // 不继承友元，故私有引擎方法须经本类（基类）方法转发，不得在测试体直接调用。
     BattleCommand gen_cmd(int E) { return engine_.generate_enemy_command(E); }
     int32_t best_target(int E) { return engine_.find_best_attack_target(E); }
+    BattleCommand dispatch_type(int E, int t) { return engine_.dispatch_ai_type(E, t); }
+    // 友元基类的辅助器：直接操控私有 state_ 以部署"受伤友军"(team1)，供支援类闸门使用。
+    void add_team1_ally(int slot, int hp, int max, int gx, int gy) {
+        auto& af = engine_.state_.fighters[slot];
+        af.is_active = true; af.team = 1;
+        af.grid_x = gx; af.grid_y = gy; af.people_idx = slot;
+        af.class_type = 1; af.level = 1; af.movement = 100;
+        af.stats.current_hp = hp; af.stats.max_hp = max; af.stats.morale = 100;
+    }
 };
 
 // —— behavior=1（登场最多 899 例）：低血(hp<25%) → 防御撤退(MOVE) ——
@@ -218,6 +229,38 @@ TEST_F(EnemyAiDispatchTest, FindBestAttackTargetContract) {
     setup_duel(40, 100, 100, 100, {{99, 14, 14}});
     EXPECT_EQ(best_target(40), -1)
         << "射程外须返回 -1（无目标）";
+}
+
+// ===================== 支援类 AI 忠实性闸门 =====================
+// 二进制 FUN_00402ddc case 7/8/0x11/0x12（ai_type 7/8/17/18）为 *同队支援* 选择器
+// （FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44 同队扫描选中友军格后施放支援技能），
+// 绝非攻击敌人。本闸门锁：医疗兵(带 skill_medical)在受伤友军在场时 ai_type 7 必须
+// 产出「治疗友军(SKILL/medical)」而非「攻击敌人」；无受伤友军时必须回退(NONE)而非误击敌人。
+
+TEST_F(EnemyAiDispatchTest, SupportAiTypeHealsInjuredAlly) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {});   // E(team1) 满血、无敌方(team0)
+    fight_.people[40].skill_medical = 1;  // FightPeople 持有 skill_medical 字段
+
+    // 受伤友军 A(slot 41, team1) 在相邻格
+    int A = 41;
+    add_team1_ally(A, 50, 100, 16, 15);
+
+    BattleCommand cmd = dispatch_type(40, 7);   // 直接驱动 ai_type 7
+    ASSERT_EQ(cmd.type, BattleCommand::SKILL)
+        << "ai_type 7 应支援受伤友军(SKILL medical)，而非攻击敌人";
+    EXPECT_EQ(cmd.skill_idx, 3) << "支援技能应为医疗(skill_idx=3)";
+    EXPECT_EQ(cmd.target_idx, A) << "支援目标须为受伤友军 A";
+}
+
+TEST_F(EnemyAiDispatchTest, SupportAiTypeFallsBackWhenNoInjuredAlly) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {});   // 无敌方、无受伤友军
+    fight_.people[40].skill_medical = 1;
+
+    BattleCommand cmd = dispatch_type(40, 7);
+    EXPECT_EQ(cmd.type, BattleCommand::NONE)
+        << "ai_type 7 无受伤友军时必须回退(NONE)，不得误击/误动";
 }
 
 }  // namespace dlzr::logic

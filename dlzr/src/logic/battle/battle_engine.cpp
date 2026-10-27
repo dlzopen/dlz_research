@@ -1143,9 +1143,11 @@ BattleCommand BattleEngine::dispatch_ai_type(int32_t fighter_idx, int ai_type) {
     case 5:  // hp != max → 攻选定目标点
         if (hp_damaged) return ai_attack_in_place(fighter_idx);
         return none;
-    // 选定目标即攻（无 hp/士气门控：FUN_004018fb/004018cc/00401c73/00401c44/
-    // 00401fff/FUN_00402b3c 等 chooser；FLAG 门控的 0x1f 近似为直接攻）
+    // 支援类（同队扫描 FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44：
+    // 选中友军格 + 施放支援技能；干净层以 ai_support_ally 治疗受伤友军近似）
     case 7: case 8: case 17: case 18:
+        return ai_support_ally(fighter_idx);
+    // 选定目标即攻（无 hp/士气门控：FUN_00401fff/FUN_00402b3c 等敌方 chooser）
     case 31: case 42: case 52: case 72:
         return ai_attack_in_place(fighter_idx);
     case 12: // morale < 60
@@ -1282,6 +1284,58 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
         }
     }
 
+    return cmd;
+}
+
+BattleCommand BattleEngine::ai_support_ally(int32_t fighter_idx) {
+    BattleCommand cmd;
+    cmd.type = BattleCommand::NONE;
+    cmd.fighter_idx = fighter_idx;
+
+    // 复刻 FUN_00402ddc case 7/8/0x11/0x12（支援类）：二进制以 FUN_004018fb/004018cc/
+    // FUN_00401c73/00401c44 同队扫描选中友军格，再施放支援技能（治疗/增益）。
+    // 干净层以"治疗受伤友军(medical)"近似支援行为：
+    //   · 无 medical 技能 → 不成支援（二进制同队扫描也需支援目标存在）→ NONE 回退；
+    //   · 有受伤友军且在其施法范围 → SKILL(medical, skill_idx=3，与 ai_try_skill 一致)；
+    //   · 有受伤友军但超距 → 朝友军移动一步（二进制：移动到友军格后施放）；
+    //   · 无受伤友军 → NONE 回退（与 FUN_004018fb 返 -1 一致）。
+    const auto& fp = get_fight_people(fighter_idx);
+    if (fp.skill_medical <= 0) return cmd;
+
+    int32_t ally = find_ally_to_heal(fighter_idx);
+    if (ally < 0) return cmd;
+
+    const auto& self = state_.fighters[fighter_idx];
+    const auto& target = state_.fighters[ally];
+    int32_t dx = self.grid_x - target.grid_x;
+    int32_t dy = self.grid_y - target.grid_y;
+    if (dx * dx + dy * dy <= 4) {
+        cmd.type = BattleCommand::SKILL;
+        cmd.skill_idx = 3;  // 医疗 / Medical（与 ai_try_skill 同索引）
+        cmd.target_idx = ally;
+        cmd.target_x = target.grid_x;
+        cmd.target_y = target.grid_y;
+        return cmd;
+    }
+
+    // 超距 → 朝受伤友军移动一步（Tier-B 近似二进制"移动到友军格后施放"）。
+    calc_movement_range(fighter_idx);
+    int32_t step = bfs_step_toward(fighter_idx, target.grid_x, target.grid_y);
+    if (step >= 0 && step < 4) {
+        constexpr int sdx[] = {0, 0, -1, 1};
+        constexpr int sdy[] = {-1, 1, 0, 0};
+        int32_t nx = self.grid_x + sdx[step];
+        int32_t ny = self.grid_y + sdy[step];
+        int32_t ncell = ny * state_.map_width + nx;
+        if (nx >= 0 && nx < state_.map_width &&
+            ny >= 0 && ny < state_.map_height &&
+            state_.movement_mask[ncell]) {
+            cmd.type = BattleCommand::MOVE;
+            cmd.target_x = nx;
+            cmd.target_y = ny;
+            return cmd;
+        }
+    }
     return cmd;
 }
 
