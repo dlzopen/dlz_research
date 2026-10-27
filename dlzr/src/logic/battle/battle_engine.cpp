@@ -1215,6 +1215,11 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
     const auto& fp = get_fight_people(fighter_idx);
     const auto& fighter = state_.fighters[fighter_idx];
 
+    // 二进制每个技能 ai_type 都「移动到目标格 + 在该格施放」(FUN_004043ea: 移动到
+    // DAT_0044b244/248 格后执行技能)。干净层若在施法范围外，应朝目标步进(MOVE)，
+    // 下一回合进入范围再施放，而非原地空等(NONE)。move_x/move_y 记录最近有效技能目标格。
+    int32_t move_x = -1, move_y = -1;
+
     if (fp.skill_medical > 0) {
         int32_t heal_target = find_ally_to_heal(fighter_idx);
         if (heal_target >= 0) {
@@ -1229,12 +1234,15 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
                 cmd.target_y = target.grid_y;
                 return cmd;
             }
+            move_x = target.grid_x; move_y = target.grid_y;  // 超距→记为移动目标
         }
     }
 
     if (fp.skill_fire > 0 || fp.skill_poison > 0) {
         int32_t best_target = -1;
         int32_t best_score = -1;
+        int32_t best_near = -1;
+        int32_t best_near_d = INT32_MAX;
         int32_t atk_range = get_attack_range(fighter_idx);
 
         for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
@@ -1244,7 +1252,9 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
 
             int32_t dx = fighter.grid_x - enemy.grid_x;
             int32_t dy = fighter.grid_y - enemy.grid_y;
-            if (dx * dx + dy * dy > atk_range * atk_range + 4) continue;
+            int32_t d2 = dx * dx + dy * dy;
+            if (d2 < best_near_d) { best_near_d = d2; best_near = i; }
+            if (d2 > atk_range * atk_range + 4) continue;
 
             int32_t score = enemy.stats.max_hp - enemy.stats.current_hp;
             if (score > best_score) {
@@ -1262,12 +1272,18 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
             cmd.target_y = target.grid_y;
             return cmd;
         }
+        if (best_near >= 0) {
+            move_x = state_.fighters[best_near].grid_x;
+            move_y = state_.fighters[best_near].grid_y;
+        }
     }
 
     if (fp.skill_intimidate > 0) {
         int32_t atk_range = get_attack_range(fighter_idx);
         int32_t best_target = -1;
         int32_t best_morale = -1;
+        int32_t best_near = -1;
+        int32_t best_near_d = INT32_MAX;
 
         for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
             const auto& enemy = state_.fighters[i];
@@ -1276,7 +1292,9 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
 
             int32_t dx = fighter.grid_x - enemy.grid_x;
             int32_t dy = fighter.grid_y - enemy.grid_y;
-            if (dx * dx + dy * dy > atk_range * atk_range + 4) continue;
+            int32_t d2 = dx * dx + dy * dy;
+            if (d2 < best_near_d) { best_near_d = d2; best_near = i; }
+            if (d2 > atk_range * atk_range + 4) continue;
 
             if (enemy.stats.morale > best_morale) {
                 best_morale = enemy.stats.morale;
@@ -1292,6 +1310,31 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
             cmd.target_x = target.grid_x;
             cmd.target_y = target.grid_y;
             return cmd;
+        }
+        if (best_near >= 0) {
+            move_x = state_.fighters[best_near].grid_x;
+            move_y = state_.fighters[best_near].grid_y;
+        }
+    }
+
+    // 有效技能目标存在但超距 → 朝目标步进(MOVE)，下一回合进入范围再施放。
+    if (move_x >= 0) {
+        calc_movement_range(fighter_idx);  // 填充 movement_mask 供 bfs_step_toward 使用
+        int32_t step = bfs_step_toward(fighter_idx, move_x, move_y);
+        if (step >= 0 && step < 4) {
+            constexpr int sdx[] = {0, 0, -1, 1};
+            constexpr int sdy[] = {-1, 1, 0, 0};
+            int32_t nx = fighter.grid_x + sdx[step];
+            int32_t ny = fighter.grid_y + sdy[step];
+            int32_t ncell = ny * state_.map_width + nx;
+            if (nx >= 0 && nx < state_.map_width &&
+                ny >= 0 && ny < state_.map_height &&
+                state_.movement_mask[ncell]) {
+                cmd.type = BattleCommand::MOVE;
+                cmd.target_x = nx;
+                cmd.target_y = ny;
+                return cmd;
+            }
         }
     }
 

@@ -308,4 +308,17 @@ TEST_F(EnemyAiDispatchTest, AiType31SkillNotAttackWhenSkillAvailable) {
     EXPECT_NE(cmd.skill_idx, 0) << "技能索引须有效";
 }
 
+// ai_type=31 技能目标超距时须先移动到目标格（MOVE），下一回合进入范围再施放，
+// 而非原地空等(NONE)——对齐二进制「移动到目标格+施放」组合动作。
+TEST_F(EnemyAiDispatchTest, AiType31SkillRepositionsWhenTargetOutOfRange) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {{99, 10, 10}});  // 敌在 (25,25)，远超施法范围
+    fight_.people[40].skill_fire = 1;
+    BattleCommand cmd = dispatch_type(40, 31);
+    ASSERT_EQ(cmd.type, BattleCommand::MOVE)
+        << "ai_type=31 技能目标超距应朝目标步进(MOVE)，而非原地空等";
+    EXPECT_TRUE(cmd.target_x != 15 || cmd.target_y != 15)
+        << "重定位落点须异于当前格";
+}
+
 }  // namespace dlzr::logic
