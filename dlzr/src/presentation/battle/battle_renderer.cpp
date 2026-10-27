@@ -347,7 +347,7 @@ void BattleRenderer::draw_status_effects(const logic::BattleState& state) {
         const auto& fighter = state.fighters[i];
         if (!fighter.is_active || fighter.stats.current_hp <= 0) continue;
 
-        int16_t flags = fighter.stats.status_flag;
+        int16_t flags = fighter.stats.status_flag16;
         if (flags == 0) continue;
 
         int32_t x, y;

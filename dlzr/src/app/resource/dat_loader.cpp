@@ -7,6 +7,9 @@
 #include "app/resource/dat_loader.hpp"
 
 #include "core/data_model/constants.hpp"
+#include "logic/combat/combat_formulas.hpp"
+#include "replica/battle_calc.hpp"
+#include "replica/battle_sim.hpp"
 
 #include <cstring>
 #include <stdexcept>
@@ -121,6 +124,48 @@ core::GameData DatLoader::load_game_data() const {
                 }
             }
         }
+
+        // 兵种地形移动消耗矩阵 BingZhongYiDong @ GAME.DAT +0x3F20
+        // 96 兵种 × 16 地形 × uint8（二进制实测：class[0]=[1×14,99,99]、
+        // class[1] 地形3/4=2）。值=移动消耗，99=不可通行。
+        constexpr size_t kMoveCostOffset = 0x3F20;
+        for (int i = 0; i < core::MAX_CLASS_TYPES; ++i) {
+            size_t offset = kMoveCostOffset + static_cast<size_t>(i) * 16;
+            if (offset + 16 > reader.size()) break;
+            reader.read_bytes(offset, &gd.class_move_cost[i], 16);
+        }
+
+        // 地形修正表 DiXingModifier @ GAME.DAT +0x00A0
+        // 二进制实测（FUN_00424566.c:15 装载 16×0x14=320B；FUN_0042a98e.c:21 /
+        // FUN_004138ea.c:262/310 按 20B(=5×int32) 记录索引）：
+        //   int0=mod_a(case3/4/5) int1=mod_b(case6) int2=防御加成%(case def) int3/int4 保留。
+        // ⚠️ 旧实现读 40B/地形是读穿进相邻块的 bug；以 20B/记录（5 int）为准。
+        constexpr size_t kTerrainModOffset = 0x00A0;
+        int32_t terrain_def_bonus[16];
+        for (int t = 0; t < 16; ++t) {
+            size_t offset = kTerrainModOffset + static_cast<size_t>(t) * 20;
+            if (offset + 20 > reader.size()) break;
+            int32_t rec[5];
+            reader.read_bytes(offset, rec, 20);
+            for (int j = 0; j < 5; ++j) gd.terrain_modifiers[t][j] = rec[j];
+            terrain_def_bonus[t] = rec[2];   // int2 = 防御加成%
+        }
+        dlzr::logic::set_terrain_defense_bonus(terrain_def_bonus);
+
+        // ★ 真实数据运行时装载接线（residual #1 接 DatLoader 统一装载点）：
+        //   FUN_00424566 装载 GAME.DAT 块#1(地形修正) → replica 三层视图（防御加成 / mod_a / mod_b）；
+        //   块#11(技能形状表, off 31820=0x7C4C, 9408B=0x24C0) → g_battlecalc_skill_shape_raw(=DAT_007cdd00)。
+        //   证据 FUN_00424566.c:15(地形) / .c:24(技能形状表, game.dat 顺序块#11)。
+        battle_calc_install_terrain_table(&gd.terrain_modifiers[0][0]);
+        battle_calc_install_terrain_mod_ab(&gd.terrain_modifiers[0][0]);
+        {
+            constexpr size_t kSkillShapeOff  = 31820;  // 0x7C4C：前 10 块 (param_2*param_3) 累加
+            constexpr size_t kSkillShapeSize = 9408;   // 0x24C0：48 条目 × 196B
+            if (reader.size() >= kSkillShapeOff + kSkillShapeSize) {
+                std::vector<uint8_t> skill_raw = reader.read_vector(kSkillShapeOff, kSkillShapeSize);
+                battle_calc_install_skill_shape_table(skill_raw.data());
+            }
+        }
     }
 
     return gd;
@@ -225,6 +270,11 @@ core::FightMap DatLoader::load_map(int32_t map_index) const {
             for (size_t t = 0; t < fm.tiles.size(); ++t) {
                 fm.tiles[t] = reader.read_at<uint16_t>(data_off + t * 2);
             }
+
+            // ★ 真实地形网格接线（residual #1 接 DatLoader 统一装载点）：
+            //   FUN_00416c70 按 fight_index fread MAP.DAT 瓦片 → 0x584390 地形网格全局。
+            //   oracle battle_calc_equip_defense(0x0042a95b) 现读真实地形而非恒为 0。
+            battle_calc_install_terrain_grid(fm.tiles.data(), fm.tiles.size(), fm.width);
             return fm;
         }
         off += record_size;
@@ -261,42 +311,67 @@ std::vector<std::string> DatLoader::load_dialogues() const {
     BinaryReader reader(resolve("TXT.DAT"));
     std::vector<std::string> dialogues;
 
-    // TXT.DAT: XOR 0x51 encrypted, variable-length records
-    // After decryption: "NNN speaker_code text\r\n" format
-    // Total size: ~110KB, 593 entries
+    // TXT.DAT 解码（铁律零实证）：
+    //   FUN_004246ab.c:59 在启动时调一次 FUN_0043c9ec(s_txt_dat_00447558) 打开 TXT.DAT
+    //   （PE 静态全局 = 文件名）；PE 数据实测 XOR 0x51 解码后为可读 GBK 文本。
+    //
+    //   ⚠️ 注意（诚实分叉，非猜测）：本 clean 层采用「3 位十进制索引 + 空格（"NNN "）
+    //   行首聚合 → 593 条」模型，是 Tier-B 重构选择，并**未**与原版对拍：
+    //     - 原版 FUN_0043c9ec 实为「控制码 token 抽取器」：按字形属性表
+    //       PTR_DAT_004487c0[c*2] & 4（FUN_0043e890）识别 token 起点
+    //       {0x01,0x03,'5'..'9',':',';','<','=','>'}，抽取 497 个 token-body 进
+    //       DAT_004569c0、索引进 DAT_0047258c；token 之外的散文被丢弃（运行时按
+    //       原始缓冲 + 控制码渲染）。见 test_txt_loader.cpp 的忠实重演（497 vs 593）。
+    //     - 原版从不按 "NNN " 行号前缀切分；本层 593 条数来自自身模型，不证明与原版一致。
+    //   既有 test_dialogue.cpp::MatchesBinaryBruteExtraction 仅用同一「NNN 」模型自校验。
+    //
+    //   条目可含**内嵌换行**（正文视觉折行），故不能按 "\r\n" 切分，
+    //   必须按「索引行首（"NNN " 或 "-1 "）」聚合为条目（与 parse_dialogue 的粘连语义一致）。
+    //   "-1" 续行（诗词旁白）用全角空格分隔，属同一 NNN 条目内的续行，不另起条目。
+    //   共 593 条（clean 层自身「NNN 」行首聚合实测值）。
 
-    std::vector<uint8_t> decrypted(reader.size());
+    std::vector<uint8_t> raw(reader.size());
     for (size_t i = 0; i < reader.size(); ++i) {
-        decrypted[i] = reader.data()[i] ^ core::TXT_XOR_KEY;
+        raw[i] = reader.data()[i] ^ core::TXT_XOR_KEY;   // XOR 0x51
+    }
+    std::string text(raw.size(), ' ');
+    for (size_t i = 0; i < raw.size(); ++i) text[i] = static_cast<char>(raw[i]);
+
+    // 按行切分（CRLF→LF，丢弃裸 \r）
+    std::vector<std::string> lines;
+    {
+        std::string cur;
+        for (char c : text) {
+            if (c == '\n') { lines.push_back(cur); cur.clear(); }
+            else if (c != '\r') cur += c;
+        }
+        if (!cur.empty()) lines.push_back(cur);
     }
 
-    // Parse entries: look for pattern "NNN " (3-digit index + space)
-    std::string text(reinterpret_cast<const char*>(decrypted.data()), decrypted.size());
-    size_t pos = 0;
+    auto is_entry_start = [](const std::string& s) {
+        if (s.size() >= 4 && std::isdigit(static_cast<unsigned char>(s[0])) &&
+            std::isdigit(static_cast<unsigned char>(s[1])) &&
+            std::isdigit(static_cast<unsigned char>(s[2])) && s[3] == ' ')
+            return true;
+        // "-1 " 行首（ASCII 空格）亦可起头；全角空格分隔的 "-1" 续行不算。
+        if (s.size() >= 3 && s[0] == '-' && s[1] == '1' && s[2] == ' ')
+            return true;
+        return false;
+    };
 
-    while (pos < text.size()) {
-        // Find entry start: 3 digits followed by space
-        if (pos + 4 < text.size() &&
-            std::isdigit(static_cast<unsigned char>(text[pos])) &&
-            std::isdigit(static_cast<unsigned char>(text[pos+1])) &&
-            std::isdigit(static_cast<unsigned char>(text[pos+2])) &&
-            text[pos+3] == ' ') {
-
-            // Find entry end: CR LF
-            size_t end = text.find("\r\n", pos);
-            if (end == std::string::npos) {
-                end = text.size();
-            }
-
-            // Extract entry (skip "NNN " prefix)
-            std::string entry = text.substr(pos + 4, end - pos - 4);
-            dialogues.push_back(entry);
-
-            pos = end + 2;  // Skip past CR LF
-        } else {
-            ++pos;
+    std::string entry;
+    bool in_entry = false;
+    for (const auto& ln : lines) {
+        if (is_entry_start(ln)) {
+            if (in_entry) dialogues.push_back(entry);
+            size_t skip = (ln.size() >= 3 && ln[0] == '-' && ln[1] == '1' && ln[2] == ' ') ? 3 : 4;
+            entry = ln.substr(skip);   // 跳过 "NNN "（4字节）或 "-1 "（3字节）索引前缀
+            in_entry = true;
+        } else if (in_entry) {
+            entry += '\n' + ln;        // 保留内嵌换行
         }
     }
+    if (in_entry) dialogues.push_back(entry);
 
     return dialogues;
 }

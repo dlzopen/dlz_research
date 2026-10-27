@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dlzr LANGUAGES CXX)
+project(dlzr LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,6 +87,7 @@ add_subdirectory(src/app)
 add_subdirectory(src/logic)
 add_subdirectory(src/presentation)
 add_subdirectory(src/platform)
+add_subdirectory(src/replica)
 
 # ============================================================
 # 主可执行文件 / Main executable
@@ -97,6 +98,7 @@ target_link_libraries(dlzr PRIVATE
     dlzr_logic
     dlzr_presentation
     dlzr_platform
+    dlzr_replica
 )
 
 # 部署引擎自带数据文件（对话组表/映射表，从原版 EXE 抽取）到 exe 目录，

@@ -10,6 +10,74 @@
 
 namespace dlzr::presentation {
 
+std::vector<DialogueColoredSegment> dialogue_build_segments(const std::string& text) {
+    // 逐字配色 = 调色板索引（非 RGB 值！）。
+    // 证据 FUN_004061df.c:39-52,100 — FUN_00405560(索引,0,0) 设置调色板色号，
+    //   'A' -> 0xb7, 'B' -> 0x85, 'C' -> 0x89, 'D' -> 0x4f, 正文/复位 -> 0x48。
+    // RGB 取 kOriginalPalette 实测值。令牌字符本身不绘制、仅着色紧随其后的 1 个字模。
+    std::vector<DialogueColoredSegment> segs;
+    auto pal = [](uint8_t idx) {
+        const uint8_t r = core::kOriginalPalette[idx * 4 + 0];
+        const uint8_t g = core::kOriginalPalette[idx * 4 + 1];
+        const uint8_t b = core::kOriginalPalette[idx * 4 + 2];
+        return std::array<uint8_t, 3>{r, g, b};
+    };
+    const auto normal_col = pal(0x48);   // (164,252,252) 亮青
+    std::string normal;
+    auto flush = [&]() {
+        if (!normal.empty()) {
+            segs.push_back({normal, normal_col[0], normal_col[1], normal_col[2]});
+            normal.clear();
+        }
+    };
+    // 配色令牌→调色板索引（RE 实证 FUN_004061df.c:39-52）。
+    auto tok_col = [&pal](char c) -> std::array<uint8_t, 3> {
+        return pal(dialogue_token_palette_index(c));
+    };
+
+    size_t i = 0;
+    while (i < text.size()) {
+        uint8_t b = static_cast<uint8_t>(text[i]);
+        bool marker = (b == 'A' || b == 'B' || b == 'C' || b == 'D') &&
+                      (i + 1 < text.size() && text[i + 1] == static_cast<char>(b));
+        if (marker) {
+            flush();
+            auto col = tok_col(static_cast<char>(b));
+            i += 2;  // 跳过 "AA"/"BB"/"CC"/"DD" 标记对
+            if (i < text.size()) {
+                uint8_t c = static_cast<uint8_t>(text[i]);
+                int n = (c < 0x80) ? 1 : 2;
+                if (i + n > text.size()) n = 1;
+                segs.push_back({text.substr(i, n), col[0], col[1], col[2]});
+                i += n;
+            }
+        } else {
+            uint8_t c = static_cast<uint8_t>(text[i]);
+            int n = (c < 0x80) ? 1 : 2;
+            if (i + n > text.size()) n = 1;
+            normal.append(text, i, n);
+            i += n;
+        }
+    }
+    flush();
+    return segs;
+}
+
+
+uint8_t dialogue_token_palette_index(char c) {
+    // 证据 FUN_004061df.c:39-52：原版逐字扫描对话串，仅 'A'/'B'/'C'/'D' 四种改调色板色号，
+    // 其余 ASCII（含 'G'/'T'/其它）一律 FUN_00405560(0x48,0,0) 正文色（亮青）。
+    // 注意：映射的是「调色板索引」而非 RGB 值；RGB 在绘制时由 kOriginalPalette[idx] 取。
+    switch (c) {
+        case 'A': return 0xb7;   // 友方名（红）
+        case 'B': return 0x85;   // 敌方名（绿）
+        case 'C': return 0x89;   // 物品/技术名（金）
+        case 'D': return 0x4f;   // 地名（淡蓝）
+        default:  return 0x48;   // 正文（亮青）
+    }
+}
+
+
 void DialogueRenderer::init(platform::Platform& platform, FontRenderer& font,
                               ImageCache& images,
                               const std::string& game_data_dir) {
@@ -55,12 +123,12 @@ void DialogueRenderer::draw_face(const uint8_t* face_rgba) {
     platform_->draw_texture(face_texture_, FACE_X, FACE_Y);
 }
 
-void DialogueRenderer::render(const std::string& speaker_name,
-                                const std::string& text,
+void DialogueRenderer::render(const std::string& text,
                                 int32_t visible_chars,
                                 const uint8_t* face_rgba) {
     if (!platform_) return;
-    (void)speaker_name;   // 原版对话框不绘制说话人名。证据 FUN_0043d82f.c（仅面板+头像+文本）。
+    // 说话人名已由调用方（main.cpp build_dialogue_display）前置进 text（默认色内联绘制），
+    // 原版 FUN_0043cc96.c:44-49 写名 + FUN_0043d82f.c 渲染整串；此处无需单独处理。
 
     // 面板图 FRAME00.TGA 404x127 @ (118,296)。
     // 证据 FUN_0043d82f.c:35-38 + FUN_00424847.c:14。
@@ -89,61 +157,8 @@ void DialogueRenderer::render(const std::string& speaker_name,
         const int32_t chars_per_line =
             has_face ? CHARS_PER_LINE_FACE : CHARS_PER_LINE_NOFACE;
 
-        // 逐字配色 = 调色板索引（非 RGB 值！）。
-        // 证据 FUN_004061df.c:39-52,100 — FUN_00405560(索引,0,0) 设置调色板色号，
-        //   'A' -> 0xb7, 'B' -> 0x85, 'C' -> 0x89, 'D' -> 0x4f,
-        //   正文/复位 -> 0x48。RGB 取 kOriginalPalette 实测值。
-        struct Seg { std::string s; uint8_t r, g, b; };
-        std::vector<Seg> segs;
-        std::string normal;
-        auto pal = [](uint8_t idx) {
-            const uint8_t r = core::kOriginalPalette[idx * 4 + 0];
-            const uint8_t g = core::kOriginalPalette[idx * 4 + 1];
-            const uint8_t b = core::kOriginalPalette[idx * 4 + 2];
-            return std::array<uint8_t, 3>{r, g, b};
-        };
-        const auto normal_col = pal(0x48);   // (164,252,252) 亮青
-        auto flush = [&]() {
-            if (!normal.empty()) {
-                segs.push_back({normal, normal_col[0], normal_col[1], normal_col[2]});
-                normal.clear();
-            }
-        };
-        auto tok_col = [&pal](char c) -> std::array<uint8_t, 3> {
-            switch (c) {
-                case 'A': return pal(0xb7);   // 友方名 (252,0,0) 红
-                case 'B': return pal(0x85);   // 敌方名 (128,152,64) 绿
-                case 'C': return pal(0x89);   // 物品/技术名 (252,184,24) 金
-                case 'D': return pal(0x4f);   // 地名 (168,196,252) 淡蓝
-                default:  return pal(0x48);
-            }
-        };
-
-        size_t i = 0;
-        while (i < text.size()) {
-            uint8_t b = static_cast<uint8_t>(text[i]);
-            bool marker = (b == 'A' || b == 'B' || b == 'C' || b == 'D') &&
-                          (i + 1 < text.size() && text[i + 1] == static_cast<char>(b));
-            if (marker) {
-                flush();
-                auto col = tok_col(static_cast<char>(b));
-                i += 2;  // 跳过 "AA"/"BB"/"CC"/"DD" 标记对
-                if (i < text.size()) {
-                    uint8_t c = static_cast<uint8_t>(text[i]);
-                    int n = (c < 0x80) ? 1 : 2;
-                    if (i + n > text.size()) n = 1;
-                    segs.push_back({text.substr(i, n), col[0], col[1], col[2]});
-                    i += n;
-                }
-            } else {
-                uint8_t c = static_cast<uint8_t>(text[i]);
-                int n = (c < 0x80) ? 1 : 2;
-                if (i + n > text.size()) n = 1;
-                normal.append(text, i, n);
-                i += n;
-            }
-        }
-        flush();
+        // 逐字配色分段（逻辑抽至 dialogue_build_segments，RE 实证 FUN_004061df.c:39-52,100）。
+        std::vector<DialogueColoredSegment> segs = dialogue_build_segments(text);
 
         auto seg_chars = [](const std::string& s) {
             int n = 0;
@@ -160,13 +175,13 @@ void DialogueRenderer::render(const std::string& speaker_name,
         int32_t cx = 0, cy = 0;
         for (const auto& seg : segs) {
             if (remaining <= 0) break;
-            int sc = seg_chars(seg.s);
+            int sc = seg_chars(seg.text);
             int draw = (sc < remaining) ? sc : remaining;
             size_t p = 0;
             for (int k = 0; k < draw; ++k) {
-                uint8_t bb = static_cast<uint8_t>(seg.s[p]);
+                uint8_t bb = static_cast<uint8_t>(seg.text[p]);
                 int n = (bb < 0x80) ? 1 : 2;
-                std::string_view ch(&seg.s[p], n);
+                std::string_view ch(&seg.text[p], n);
                 // 全角字宽 16px 网格（FUN_004061df.c:98 GBK uVar1 += 0x10）。
                 int32_t draw_x = tx + cx * FontRenderer::CHAR_WIDTH;
                 int32_t draw_y = ty + cy * LINE_HEIGHT;

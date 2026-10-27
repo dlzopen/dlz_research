@@ -15,4 +15,6 @@ add_library(dlzr_app STATIC
 target_include_directories(dlzr_app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
-target_link_libraries(dlzr_app PUBLIC dlzr_core)
+# dat_loader 经 battle_calc_install_* / battle_calc_install_terrain_grid 把真实数据
+# 装载进 replica / clean 全局（residual #1 接 DatLoader 统一装载点）。
+target_link_libraries(dlzr_app PUBLIC dlzr_core dlzr_replica)

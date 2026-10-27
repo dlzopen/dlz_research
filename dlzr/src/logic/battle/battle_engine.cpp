@@ -2,6 +2,7 @@
 // Battle engine implementation
 
 #include "logic/battle/battle_engine.hpp"
+#include "logic/battle/campaign_recruitment.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -9,6 +10,33 @@
 #include <queue>
 
 namespace dlzr::logic {
+
+// ===================================================================
+// 敌方 AI 派发表 DAT_00446030（从 reverse/DLZ.exe .data 节 VA 0x00446030
+// 字节级抽取，1024 字节 = 16 行 × 16 列 uint32）。
+// 行索引 = fighter.behavior & 0xF；列索引 = FUN_00403f8e 回退序(0..15)。
+// 每格值即传给 FUN_00402ddc 的 ai_type。FUN_00403f8e 按列序尝试，首个
+// FUN_00402ddc 返回 1（决策成立）的列即生效；全 0 列(case 0)→待命。
+// 证据: FUN_00403f8e.c:14-26 + FUN_00402ddc.c 全表。
+// ===================================================================
+static constexpr int kAiDispatchTable[16][16] = {
+    { 2, 12, 21, 31, 41, 51, 61, 71,  3, 13,  8, 18,  0,  0,  0,  0}, // behavior 0
+    { 1, 11, 22, 42, 52, 72, 61, 31,  6, 16,  7, 17,  0,  0,  0,  0}, // behavior 1
+    { 1, 11, 23, 22, 42, 52, 72, 61, 31,  5, 15, 33,  0,  0,  0,  0}, // behavior 2
+    {23,  5, 15, 33,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 3
+    { 1, 11, 22, 42, 52, 72, 31,  4, 14, 32,  0,  0,  0,  0,  0,  0}, // behavior 4
+    { 4, 14, 32, 31, 41, 71,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 5
+    { 1, 11, 23, 22, 42, 52, 72, 61, 31,  5, 15, 33,  0,  0,  0,  0}, // behavior 6
+    { 1, 11, 22, 42, 52, 72, 61, 31,  6, 16,  7, 17,  0,  0,  0,  0}, // behavior 7
+    {32,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 8
+    { 2, 12, 31, 61, 41, 51, 21, 71,  3, 13,  8, 18,  0,  0,  0,  0}, // behavior 9
+    { 1, 11, 22, 31, 42, 52, 72,  4, 14, 32,  0,  0,  0,  0,  0,  0}, // behavior 10
+    { 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 11
+    {31,  2, 12, 61, 41, 51, 21, 71,  3, 13,  8, 18,  0,  0,  0,  0}, // behavior 12
+    { 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 13
+    { 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 14
+    { 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}, // behavior 15
+};
 
 void BattleEngine::init(core::FightData& fight, core::GameData& game,
                          int32_t difficulty_level) {
@@ -90,6 +118,11 @@ void BattleEngine::init(core::FightData& fight, core::GameData& game,
         hero.skill_motivate = 1;
     }
 
+    // 战役招募写回（Tier-B 接缝）：把已招募同伴(game.people[k], k∈[1,39])填充进本关
+    // 战斗数据，使下方 init_fighters 的现成循环按"同一槽位索引"部署同伴
+    // （证据 FUN_0041b53c.c:19-29）。空名册→不部署同伴（首关/未招募时行为不变）。
+    apply_campaign_recruitment(fight, game.campaign_roster, game);
+
     init_grid();
     init_fighters();
 
@@ -145,10 +178,22 @@ void BattleEngine::init_grid() {
     state_.cam_y = cy;
 
     int32_t cells = state_.grid_cells();
-    // TODO(RE): 逆向真实逐格地形来源。FIGHT.DAT intro.grid_terrain[92] 并非
-    // MAP.DAT 网格的 1:1 地形，真实地形另有来源。当前暂置全可通行，保证
-    // 第一关可玩，待逆向后接入。
+    // ★ RE 更正（2026-10-26）：战斗地形真实来源 = **MAP.DAT 瓦片网格**（非 FIGHT.DAT intro.grid_terrain[92]）。
+    //   证据链（铁律零，指到具体行）：
+    //   · FUN_00416c70.c:24 — FUN_0043e510(&DAT_00584390, 1, w*2*h, mapfile) 把 MAP.DAT 地形装入
+    //     DAT_00584390（ushort 数组，索引 (y*w+x)，高 4 位 = 地形旗标）。
+    //   · FUN_0042a95b.c:10 — get_terrain(x,y) = DAT_00584390[(y*w+x)] >> 0xc（与 MapModel::terrain_at 同式）。
+    //   · FUN_00418e29.c:14-54 — 移动范围洪水填充读 DAT_0058438e/90/92（相邻 ±1ushort 偏移，巧妙指向
+    //     "进入格"地形）作步进代价 = class_move_cost[entered_terrain>>12][兵种]，预算 = 移动力。
+    //   · FIGHT.DAT intro.grid_terrain[92]（DAT_007d030c）经全量扫描**从未写入地形缓冲**，仅在
+    //     FUN_004084e8/FUN_0040d29b/FUN_0043b4f1 作为坐标/指针表读取 → 实为坐标/覆盖层，非移动地形。
+    //   故 grid_terrain 存 MAP.DAT 瓦片地形旗标(0-15)；class_move_cost[旗标][兵种] >= 99 即不可通行。
     state_.grid_terrain.assign(cells, 0);
+    if (map_ && map_->tiles.size() == static_cast<size_t>(cells)) {
+        for (int32_t i = 0; i < cells; ++i) {
+            state_.grid_terrain[i] = (static_cast<int32_t>(map_->tiles[i]) >> 12) & 0xF;
+        }
+    }
     state_.grid_mines.assign(cells, BattleState::PlacedMine{});
     state_.movement_mask.assign(cells, false);
     state_.attack_mask.assign(cells, false);
@@ -163,22 +208,24 @@ void BattleEngine::init_fighters() {
     else if (difficulty_level_ == 2) diff_pct = 130;
 
     // --- 敌方 / 原战斗名册单位（来自 FIGHT.DAT.fighters + fight.people）---
-    // 【部署判据】只看 grid_x != 999，不看 stage。
-    // 证据 FUN_0041b53c.c:19-23：
-    //   for (local_8 = 0; local_8 < 0x80; local_8++)
-    //     if ((&DAT_0096aba4)[local_8 * 0x10] != 999)
-    //       FUN_0041b470(*(int*)(DAT_0096cba8 + (&DAT_007d0f24)[local_8*0x21] * 0xa0), local_8);
-    //   · (&DAT_0096aba4)[unit*0x10] 为 int 下标 → 字节步长 = 0x10*4 = 64 = sizeof(FightFighter)，
-    //     999 是 grid_x 哨兵（types.hpp: FightFighter.grid_x "999=未部署"），
-    //     ⇒ 整句等价于 fighters[unit].grid_x != 999。
-    //   · (&DAT_007d0f24)[unit*0x21] 同样为 int 下标 → 步长 0x21*4 = 132 = sizeof(FightPeople)，
-    //     且该符号落在记录内 +0x2C ⇒ 读到的正是 FightPeople.class_type。
-    //   · 循环内**完全没有 stage 判定**。
-    // 此前额外要求 stage==1 属臆造条件，误丢 fight0 槽位 42/43/44
-    //   （真实坐标 (18,8)/(17,8)/(18,9)、朝向 2=西、behavior=1 巡逻）。
+    // 【部署判据】grid_x != 999 且 stage == 1。
+    // 证据 FUN_0041b53c.c:19-23 仅负责把每个 grid_x!=999 的单位**映射到精灵槽位**
+    //   （FUN_0041b470 写 DAT_007db4f8[unit]=精灵slot），并不决定"是否登场/是否参与本回合"。
+    // 真正决定"首回合登场"的是 FightFighter.stage（+0x3C，types.hpp：0=预备, 1=登场）。
+    // 数据实测 fight0（DLZFULL/FIGHT.DAT 字节级 dump）：
+    //   8 个 grid_x!=999 单位中，仅 slot 40/41 为 stage==1（(6,17)/(7,17)，敌方 2 名）；
+    //   slot 42/43/44(巡逻 18,8/17,8/18,9)、45/98/99(占位 @0,0) 均为 stage==0（预备/增援/剧情位）。
+    // ⇒ 原版首回合只让 stage==1 的 2 名敌人登场；stage==0 为单位增援/剧情位，
+    //   由原版关卡事件（PTR_FUN_004465d0[fight_index]）在后续回合触发登场。
+    // 此前去掉 stage 门槛会一次性部署全部 8 个（含 6 名本不该首回合出现的单位），
+    //   与用户"第一回合只有2个敌人"的目测事实冲突——已回滚到 stage==1 闸门。
     for (int i = 0; i < 128; ++i) {
         const auto& src = fight_->fighters[i];
         if (src.grid_x == 999) {
+            continue;
+        }
+        // 仅登场单位(stage==1)在本回合出现；预备(stage==0)留待关卡事件增援登场。
+        if (src.stage != 1) {
             continue;
         }
         // FIGHT.DAT 每关只有 88 名角色名册 (People[88])，而战斗部署位有 128 个。
@@ -310,6 +357,16 @@ bool BattleEngine::is_fighter_alive(int32_t fighter_idx) const {
         && state_.fighters[fighter_idx].stats.current_hp > 0;
 }
 
+bool BattleEngine::is_hard_obstacle(int32_t cell) const {
+    if (cell < 0 || cell >= state_.grid_cells()) return true;
+    int32_t flag = state_.grid_terrain[cell] & 0xF;
+    if (game_ == nullptr) return false;
+    for (int c = 0; c < core::MAX_CLASS_TYPES; ++c) {
+        if (game_->class_move_cost[c][flag] < 99) return false;
+    }
+    return true;
+}
+
 int32_t BattleEngine::count_alive_on_team(int32_t team) const {
     int32_t count = 0;
     for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
@@ -343,13 +400,32 @@ int32_t BattleEngine::get_movement_range(int32_t fighter_idx) const {
     if (!fighter.is_active) return 0;
 
     const auto& cls = get_class_type(fighter.class_type);
-    int32_t base_range = cls.movement;
-    if (base_range <= 0) base_range = 3;
+    // 二进制移动预算 = 兵种移动力 + 装备物品最大移动加成（求和，非求积）。
+    // 证据链（铁律零，坐标可证）：
+    //   FUN_0040124c.c:32 → FUN_00418e29 的预算 param_3 = iVar3 + iVar2；
+    //     iVar3 = *(int*)(&DAT_0096cbbc + class*0xa0)  —— 运行时兵种表 offset0 = 移动力
+    //            （stride 0xA0=160 = sizeof(ClassType)），即 cls.movement；
+    //     iVar2 = FUN_0042b192(unit)                   —— 8 槽装备物品的最大移动加成。
+    //   FUN_0042b192.c:16-21 逐槽取 max(WuPin[item-1].para1)，
+    //     条件：物品存在(item_id!=0)、uVar1=item_id-1 且 0x50<uVar1（item_id>0x81）、
+    //           wupin_compat[item-1][class]!=0（兼容矩阵 DAT_0095eb88）。
+    //   二进制不 clamp 兵种移动力（raw 直读），此处忠实直用，不做 /100 或 % 缩放。
+    int32_t base = cls.movement;
 
-    int32_t move_pct = fighter.movement;
-    if (move_pct <= 0) move_pct = 100;
+    int32_t bonus = 0;
+    const int32_t cls_idx = fighter.class_type;
+    for (size_t s = 0; s < fighter.items.size(); ++s) {
+        const uint8_t item_id = fighter.items[s];
+        if (item_id == 0) continue;                                 // 空槽
+        const int item_idx = static_cast<int>(item_id) - 1;         // uVar1 = item_id - 1
+        if (item_idx < 0 || item_idx >= core::MAX_WUPIN) continue;
+        if (!(item_idx > 0x50)) continue;                           // FUN_0042b192.c:17 的 0x50 < uVar1
+        if (cls_idx < 0 || cls_idx >= core::MAX_CLASS_TYPES) continue;
+        if (game_->wupin_compat[item_idx][cls_idx] == 0) continue;  // 兵种×物品兼容矩阵
+        bonus = std::max(bonus, game_->items[item_idx].para1);
+    }
 
-    return std::max(1, base_range * move_pct / 100);
+    return base + bonus;
 }
 
 void BattleEngine::set_selected_fighter(int32_t idx) {
@@ -382,29 +458,42 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
     const auto& fighter = state_.fighters[fighter_idx];
     if (!fighter.is_active) return;
 
-    int32_t max_dist = get_movement_range(fighter_idx);
-    int32_t start_x = fighter.grid_x;
-    int32_t start_y = fighter.grid_y;
+    // 地形加权 Dijkstra（证据 FUN_00418e29.c:14-54）：进入邻格代价 =
+    // class_move_cost[邻格地形旗标 >> 12][兵种]，预算 = 移动力 get_movement_range。
+    // 代价 >= 99（class_move_cost 表项）即不可通行；原版无单独的 99 地形旗标，
+    // 不可通行完全由移动消耗表编码。
+    const int32_t budget = get_movement_range(fighter_idx);
+    const int32_t class_type = fighter.class_type;
+    const int32_t start_x = fighter.grid_x;
+    const int32_t start_y = fighter.grid_y;
+    if (start_x < 0 || start_x >= state_.map_width ||
+        start_y < 0 || start_y >= state_.map_height)
+        return;
 
-    struct Pos { int32_t x, y, dist; };
-    std::queue<Pos> bfs;
-    std::vector<bool> visited(state_.grid_cells(), false);
+    const int32_t start_cell = start_y * state_.map_width + start_x;
+    std::vector<int32_t> best(state_.grid_cells(), INT32_MAX);
+    auto cmp = [](const std::pair<int32_t, int32_t>& a,
+                  const std::pair<int32_t, int32_t>& b) {
+        return a.first > b.first;  // 小顶堆
+    };
+    std::priority_queue<std::pair<int32_t, int32_t>,
+                       std::vector<std::pair<int32_t, int32_t>>,
+                       decltype(cmp)> pq(cmp);
 
-    int32_t start_cell = start_y * state_.map_width + start_x;
-    if (start_cell < 0 || start_cell >= state_.grid_cells()) return;
-
-    visited[start_cell] = true;
-    bfs.push({start_x, start_y, 0});
+    best[start_cell] = 0;
+    pq.push({0, start_cell});
     state_.movement_mask[start_cell] = true;
 
     constexpr int dx[] = {0, 0, -1, 1};
     constexpr int dy[] = {-1, 1, 0, 0};
 
-    while (!bfs.empty()) {
-        auto [cx, cy, cd] = bfs.front();
-        bfs.pop();
+    while (!pq.empty()) {
+        auto [cd, cell] = pq.top();
+        pq.pop();
+        if (cd > best[cell]) continue;
 
-        if (cd >= max_dist) continue;
+        int32_t cx = cell % state_.map_width;
+        int32_t cy = cell / state_.map_width;
 
         for (int d = 0; d < 4; ++d) {
             int32_t nx = cx + dx[d];
@@ -413,8 +502,12 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
             if (ny < 0 || ny >= state_.map_height) continue;
 
             int32_t ncell = ny * state_.map_width + nx;
-            if (visited[ncell]) continue;
-            if (state_.grid_terrain[ncell] == 99) continue;
+            if (ncell == start_cell) continue;
+
+            int32_t flag = state_.grid_terrain[ncell] & 0xF;
+            int32_t step = (game_ != nullptr && flag < 16)
+                               ? game_->class_move_cost[class_type][flag] : 99;
+            if (step >= 99) continue;  // 不可通行地形
 
             bool blocked = false;
             for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
@@ -428,9 +521,13 @@ void BattleEngine::calc_movement_range(int32_t fighter_idx) {
             }
             if (blocked) continue;
 
-            visited[ncell] = true;
-            state_.movement_mask[ncell] = true;
-            bfs.push({nx, ny, cd + 1});
+            int32_t nd = cd + step;
+            if (nd > budget) continue;
+            if (nd < best[ncell]) {
+                best[ncell] = nd;
+                state_.movement_mask[ncell] = true;
+                pq.push({nd, ncell});
+            }
         }
     }
 }
@@ -609,7 +706,7 @@ void BattleEngine::execute_place_mine(const BattleCommand& cmd) {
 
     int32_t cell = cmd.target_y * state_.map_width + cmd.target_x;
     if (cell < 0 || cell >= state_.grid_cells()) return;
-    if (state_.grid_terrain[cell] == 99) return;
+    if (is_hard_obstacle(cell)) return;
     if (state_.grid_mines[cell].mine_type != 0) return;
 
     state_.grid_mines[cell].mine_type = mine_idx;
@@ -683,6 +780,11 @@ void BattleEngine::check_mine_trigger(int32_t fighter_idx, int32_t grid_x, int32
 }
 
 void BattleEngine::apply_damage(int32_t attacker_idx, int32_t defender_idx) {
+    // 记录"攻击者"索引（二进制 fighter 记录 +0x38 = attacker_index），供撤退决策
+    // FUN_0040144e 选定"远离特定攻击者"而非最近敌人。命中即写，对齐二进制。
+    if (defender_idx >= 0 && defender_idx < BattleState::MAX_FIGHTERS)
+        state_.fighters[defender_idx].attacker = attacker_idx;
+
     // 使用单位在部署时解耦拷贝的属性，而非按运行时索引反查名册（玩家单位
     // 的索引指向 PEOPLE.DAT，直接反查 fight.people 会得到错误角色的数据）。
     const auto& atk_rt = state_.fighters[attacker_idx];
@@ -790,10 +892,9 @@ void BattleEngine::award_kill_exp(int32_t killer_idx, int32_t victim_idx) {
 
     int32_t killer_level = state_.fighters[killer_idx].level;
     int32_t victim_level = state_.fighters[victim_idx].level;
-    int32_t base_exp = victim_level * 10;
 
-    int32_t exp = calc_experience(killer_level, victim_level, base_exp);
-    game_->people[people_idx].experience += exp;
+    int32_t exp = calc_kill_exp(killer_level, victim_level);
+    apply_experience_gain(game_->people[people_idx], exp);
 }
 
 void BattleEngine::advance_turn() {
@@ -884,149 +985,188 @@ int32_t BattleEngine::find_best_attack_target(int32_t fighter_idx) {
     return best_idx;
 }
 
-int32_t BattleEngine::bfs_step_toward(int32_t from_x, int32_t from_y,
-                                       int32_t to_x, int32_t to_y,
-                                       int32_t max_dist) {
-    struct Pos { int32_t x, y; };
-    std::queue<Pos> bfs;
-    std::vector<bool> visited(state_.grid_cells(), false);
-    std::vector<int32_t> first_step(state_.grid_cells(), -1);
+// 对齐二进制 find_nearest_free_cell（replica_stubs.c:1998，AI 派发 FUN_00402ddc 的
+// 前进/追击落点选择）：在地形加权可达集（state_.movement_mask，与 FUN_00418e29 洪泛 1:1）
+// 内，选离 (to_x,to_y) 曼哈顿距离最小、且严格优于当前位置的格作为移动落点；
+// 无更优可达格返回 -1（原地不动）。
+// 二进制度量证据：find_nearest_free_cell.c:2027-2035——遍历可达格(掩码==0)，
+//   local_10 = |x-param2|+|y-param3|，if(local_10 < local_1c) 更新
+//   （local_1c 初值 = 起点到目标的曼哈顿距离，故严格优于起点才移动）；无地形罚。
+// 注：find_best_cell_terrain(FUN_0040144e) 是“低血/低士气撤退”专用例程——它 *最大化*
+//   曼哈顿+地形{9,10,0xb}罚9 距离，方向与本函数相反，不可混用。
+int32_t BattleEngine::select_destination_cell(int32_t fighter_idx,
+                                              int32_t to_x, int32_t to_y) {
+    if (fighter_idx < 0 || fighter_idx >= BattleState::MAX_FIGHTERS) return -1;
+    const auto& fighter = state_.fighters[fighter_idx];
+    const int32_t w = state_.map_width, h = state_.map_height;
+    int32_t from_x = fighter.grid_x, from_y = fighter.grid_y;
+    if (from_x < 0 || from_x >= w || from_y < 0 || from_y >= h) return -1;
+    if (to_x == from_x && to_y == from_y) return -1;
 
-    int32_t start_cell = from_y * state_.map_width + from_x;
-    visited[start_cell] = true;
-    bfs.push({from_x, from_y});
+    // 刷新该单位专属加权可达集（与二进制 floodfill_move_8e29 1:1；预算 get_movement_range）。
+    calc_movement_range(fighter_idx);
+    const auto& mask = state_.movement_mask;
 
-    constexpr int dx[] = {0, 0, -1, 1};
-    constexpr int dy[] = {-1, 1, 0, 0};
-
-    while (!bfs.empty()) {
-        auto [cx, cy] = bfs.front();
-        bfs.pop();
-
-        int32_t ccell = cy * state_.map_width + cx;
-        int32_t cdist = 0;
-        {
-            int32_t ddx = cx - from_x;
-            int32_t ddy = cy - from_y;
-            cdist = (ddx < 0 ? -ddx : ddx) + (ddy < 0 ? -ddy : ddy);
-        }
-        if (cdist >= max_dist) continue;
-
-        for (int d = 0; d < 4; ++d) {
-            int32_t nx = cx + dx[d];
-            int32_t ny = cy + dy[d];
-            if (nx < 0 || nx >= state_.map_width) continue;
-            if (ny < 0 || ny >= state_.map_height) continue;
-
-            int32_t ncell = ny * state_.map_width + nx;
-            if (visited[ncell]) continue;
-            if (state_.grid_terrain[ncell] == 99) continue;
-
-            bool blocked = false;
-            for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
-                const auto& f = state_.fighters[i];
-                if (f.is_active && is_fighter_alive(i) &&
-                    f.grid_x == nx && f.grid_y == ny) {
-                    blocked = true;
-                    break;
-                }
-            }
-            if (blocked) continue;
-
-            visited[ncell] = true;
-            first_step[ncell] = (cdist == 0) ? d : first_step[ccell];
-            bfs.push({nx, ny});
-
-            if (nx == to_x && ny == to_y) {
-                int32_t step = first_step[ncell];
-                if (step >= 0 && step < 4) {
-                    return step;
-                }
-            }
-        }
-    }
-
+    auto ai = [](int32_t v) { return v < 0 ? -v : v; };
+    int32_t start_dist = ai(from_x - to_x) + ai(from_y - to_y);
     int32_t best_cell = -1;
-    int32_t best_dist = INT32_MAX;
-    for (int y = 0; y < state_.map_height; ++y) {
-        for (int x = 0; x < state_.map_width; ++x) {
-            int32_t cell = y * state_.map_width + x;
-            if (!visited[cell]) continue;
-            int32_t ddx = x - to_x;
-            int32_t ddy = y - to_y;
-            int32_t dist = ddx * ddx + ddy * ddy;
-            if (dist < best_dist) {
-                best_dist = dist;
+    int32_t best_score = start_dist;   // 严格优于起点才移动（对齐 local_1c 初值）
+    for (int32_t y = 0; y < h; ++y) {
+        for (int32_t x = 0; x < w; ++x) {
+            int32_t cell = y * w + x;
+            if (!mask[cell]) continue;
+            int32_t d = ai(x - to_x) + ai(y - to_y);
+            if (d < best_score) {        // 曼哈顿最小（对齐 find_nearest_free_cell 的 < 更新）
+                best_score = d;
                 best_cell = cell;
             }
         }
     }
+    return best_cell;
+}
 
-    if (best_cell >= 0 && first_step[best_cell] >= 0) {
-        return first_step[best_cell];
+// 在 select_destination_cell 选定落点的基础上，朝该落点走一步（4 邻接贪心，优先缩小较大轴差）。
+// 单步推进属 Tier-B 实现细节；二进制由 FUN_004043ea 沿加权路径推进，本函数只保证方向正确。
+int32_t BattleEngine::bfs_step_toward(int32_t fighter_idx,
+                                      int32_t to_x, int32_t to_y) {
+    int32_t best_cell = select_destination_cell(fighter_idx, to_x, to_y);
+    if (best_cell < 0) return -1;
+
+    const auto& fighter = state_.fighters[fighter_idx];
+    const int32_t w = state_.map_width, h = state_.map_height;
+    int32_t from_x = fighter.grid_x, from_y = fighter.grid_y;
+    int32_t bx = best_cell % w, by = best_cell / w;
+
+    constexpr int sdx[] = {0, 0, -1, 1};
+    constexpr int sdy[] = {-1, 1, 0, 0};
+    int32_t dx = bx - from_x, dy = by - from_y;
+
+    auto reachable = [&](int d) -> bool {
+        int32_t nx = from_x + sdx[d], ny = from_y + sdy[d];
+        return nx >= 0 && nx < w && ny >= 0 && ny < h &&
+               state_.movement_mask[ny * w + nx];
+    };
+
+    int32_t step = -1;
+    if (dx != 0 && std::abs(dx) >= std::abs(dy)) {
+        int primary = dx > 0 ? 3 : 2;   // +x / -x
+        int secondary = dy > 0 ? 1 : 0; // +y / -y
+        if (reachable(primary)) step = primary;
+        else if (reachable(secondary)) step = secondary;
+    } else if (dy != 0) {
+        int primary = dy > 0 ? 1 : 0;   // +y / -y
+        int secondary = dx > 0 ? 3 : 2; // +x / -x
+        if (reachable(primary)) step = primary;
+        else if (reachable(secondary)) step = secondary;
     }
-    return -1;
+    return step;
 }
 
 BattleCommand BattleEngine::generate_enemy_command(int32_t fighter_idx) {
-    BattleCommand cmd;
-    cmd.fighter_idx = fighter_idx;
+    BattleCommand none;
+    none.type = BattleCommand::NONE;
+    none.fighter_idx = fighter_idx;
 
-    const auto& fighter = state_.fighters[fighter_idx];
-    uint8_t behavior = fight_->fighters[fighter_idx].behavior;
-
-    if (should_retreat(fighter_idx)) {
-        return ai_retreat(fighter_idx);
+    const uint8_t behavior = fight_->fighters[fighter_idx].behavior;
+    // 复刻 FUN_00403f8e：按列序尝试 DAT_00446030[behavior&0xF][col]，首个
+    // dispatch_ai_type 返回非 NONE（决策成立）即生效；全列不成立→待命
+    // （对应 FUN_00403f8e 循环耗尽后 DAT_0044b230=2 的默认行为）。
+    for (int col = 0; col < 16; ++col) {
+        const int ai_type = kAiDispatchTable[behavior & 0xF][col];
+        BattleCommand cmd = dispatch_ai_type(fighter_idx, ai_type);
+        if (cmd.type != BattleCommand::NONE) return cmd;
     }
+    BattleCommand wait;
+    wait.type = BattleCommand::WAIT;
+    wait.fighter_idx = fighter_idx;
+    return wait;
+}
 
-    BattleCommand skill_cmd = ai_try_skill(fighter_idx);
-    if (skill_cmd.type != BattleCommand::NONE) {
-        return skill_cmd;
+// 复刻 FUN_00402ddc 的单个 ai_type 分支。触发条件满足→返回对应动作；
+// 否则返回 NONE（上层回退到表的下一列）。动作执行复用已验证的执行器
+// （ai_attack_in_place / ai_guard / ai_retreat / ai_try_skill），这些执行器
+// 的移动可达集/伤害已分别由 test_movement_range / test_combat_formula_anchors 锁定。
+BattleCommand BattleEngine::dispatch_ai_type(int32_t fighter_idx, int ai_type) {
+    BattleCommand none;
+    none.type = BattleCommand::NONE;
+    none.fighter_idx = fighter_idx;
+
+    const auto& f = state_.fighters[fighter_idx];
+    const int32_t hp = f.stats.current_hp;
+    const int32_t mhp = f.stats.max_hp > 0 ? f.stats.max_hp : 1;
+    const int32_t morale = f.stats.morale;
+
+    auto hp_lt = [&](int64_t num, int64_t den) -> bool {
+        return static_cast<int64_t>(hp) * den < static_cast<int64_t>(mhp) * num;
+    };
+    const bool hp_damaged = (hp != mhp);
+    const bool morale_low25 = (morale < 0x19);   // 25
+    const bool morale_low60 = (morale < 0x3c);   // 60
+    const bool morale_notfull = (morale != 100);
+
+    switch (ai_type) {
+    case 0: {  // 待命（FUN_00402ddc case 0，恒成立）
+        BattleCommand c; c.type = BattleCommand::WAIT; c.fighter_idx = fighter_idx;
+        return c;
     }
-
-    int32_t attack_target = find_best_attack_target(fighter_idx);
-    if (attack_target >= 0) {
-        cmd.type = BattleCommand::ATTACK;
-        cmd.target_idx = attack_target;
-        return cmd;
-    }
-
-    BattleCommand mine_cmd = ai_try_mine(fighter_idx);
-    if (mine_cmd.type != BattleCommand::NONE) {
-        return mine_cmd;
-    }
-
-    switch (behavior) {
-    case 0:  // idle — hold position
-        cmd.type = BattleCommand::WAIT;
-        return cmd;
-    case 1:  // patrol — move between patrol points
-        return ai_patrol(fighter_idx);
-    case 4:  // chase — aggressively pursue nearest enemy
-        return ai_chase(fighter_idx);
-    case 5:  // guard — stay near guard position
-        return ai_guard(fighter_idx);
-    case 6:  // assist — support a specific ally
-        return ai_assist(fighter_idx);
-    case 7:  // ambush — wait then strike
-        return ai_ambush(fighter_idx);
-    default: // chase by default
-        return ai_chase(fighter_idx);
+    // —— 撤退类（DAT_0044b230=1, 经 FUN_0040144e 选撤退落点）——
+    case 1:  // hp < 25%
+        if (hp_lt(1, 4)) return ai_retreat(fighter_idx);
+        return none;
+    case 6:  // hp != max
+        if (hp_damaged) return ai_retreat(fighter_idx);
+        return none;
+    case 11: // morale < 25
+        if (morale_low25) return ai_retreat(fighter_idx);
+        return none;
+    case 16: // morale != 100
+        if (morale_notfull) return ai_retreat(fighter_idx);
+        return none;
+    // —— 移动到固定坐标类（FUN_0040124c / 守卫点）——
+    case 3:  // hp != max → 移到守卫点（原地不动=待命）
+    case 4:  // hp != max → 移到固定坐标
+    case 14: // morale != 100 → 移到固定坐标
+    case 32: // 移到选定坐标（FUN_0040124c）
+    case 33: // 移到选定坐标
+        if ((ai_type == 3 || ai_type == 4) ? hp_damaged : morale_notfull) {
+            return ai_guard(fighter_idx);  // ai_guard 复用：朝 target_pos 步进, 在射程内则攻
+        }
+        return none;
+    // —— 技能类（DAT_0044b23c=1）——
+    case 21: case 22: case 23:
+    case 41: case 51: case 61: case 71:
+        return ai_try_skill(fighter_idx);
+    // —— 攻击类（原地攻击 DAT_0044b230=0 / 选定目标）——
+    case 2:  // hp < 60%
+        if (hp_lt(3, 5)) return ai_attack_in_place(fighter_idx);
+        return none;
+    case 5:  // hp != max → 攻选定目标点
+        if (hp_damaged) return ai_attack_in_place(fighter_idx);
+        return none;
+    // 选定目标即攻（无 hp/士气门控：FUN_004018fb/004018cc/00401c73/00401c44/
+    // 00401fff/FUN_00402b3c 等 chooser；FLAG 门控的 0x1f 近似为直接攻）
+    case 7: case 8: case 17: case 18:
+    case 31: case 42: case 52: case 72:
+        return ai_attack_in_place(fighter_idx);
+    case 12: // morale < 60
+        if (morale_low60) return ai_attack_in_place(fighter_idx);
+        return none;
+    case 13: case 15: // morale != 100 → 攻选定目标点
+        if (morale_notfull) return ai_attack_in_place(fighter_idx);
+        return none;
+    default:
+        return none;
     }
 }
 
-bool BattleEngine::should_retreat(int32_t fighter_idx) const {
-    const auto& f = state_.fighters[fighter_idx];
-    if (f.stats.current_hp <= 0) return false;
-    float hp_ratio = static_cast<float>(f.stats.current_hp) /
-                     static_cast<float>(f.stats.max_hp);
-    if (hp_ratio > 0.2f) return false;
-    int32_t nearest_enemy = find_nearest_enemy(fighter_idx);
-    if (nearest_enemy < 0) return false;
-    const auto& enemy = state_.fighters[nearest_enemy];
-    int32_t dx = f.grid_x - enemy.grid_x;
-    int32_t dy = f.grid_y - enemy.grid_y;
-    return (dx * dx + dy * dy) <= 9;
+BattleCommand BattleEngine::ai_attack_in_place(int32_t fighter_idx) {
+    BattleCommand cmd;
+    cmd.fighter_idx = fighter_idx;
+    const int32_t t = find_best_attack_target(fighter_idx);
+    if (t < 0) { cmd.type = BattleCommand::NONE; return cmd; }
+    cmd.type = BattleCommand::ATTACK;
+    cmd.target_idx = t;
+    return cmd;
 }
 
 int32_t BattleEngine::find_ally_to_heal(int32_t fighter_idx) const {
@@ -1249,8 +1389,7 @@ BattleCommand BattleEngine::ai_patrol(int32_t fighter_idx) {
         return cmd;
     }
 
-    int32_t step = bfs_step_toward(fighter.grid_x, fighter.grid_y, px, py,
-                                    get_movement_range(fighter_idx));
+    int32_t step = bfs_step_toward(fighter_idx, px, py);
     if (step >= 0 && step < 4) {
         constexpr int sdx[] = {0, 0, -1, 1};
         constexpr int sdy[] = {-1, 1, 0, 0};
@@ -1304,9 +1443,7 @@ BattleCommand BattleEngine::ai_guard(int32_t fighter_idx) {
             return cmd;
         }
 
-        int32_t step = bfs_step_toward(fighter.grid_x, fighter.grid_y,
-                                        guard_x, guard_y,
-                                        get_movement_range(fighter_idx));
+        int32_t step = bfs_step_toward(fighter_idx, guard_x, guard_y);
         if (step >= 0 && step < 4) {
             constexpr int sdx[] = {0, 0, -1, 1};
             constexpr int sdy[] = {-1, 1, 0, 0};
@@ -1377,9 +1514,7 @@ BattleCommand BattleEngine::ai_assist(int32_t fighter_idx) {
         }
     }
 
-    int32_t step = bfs_step_toward(fighter.grid_x, fighter.grid_y,
-                                    ally.grid_x, ally.grid_y,
-                                    get_movement_range(fighter_idx));
+    int32_t step = bfs_step_toward(fighter_idx, ally.grid_x, ally.grid_y);
     if (step >= 0 && step < 4) {
         constexpr int sdx[] = {0, 0, -1, 1};
         constexpr int sdy[] = {-1, 1, 0, 0};
@@ -1433,9 +1568,7 @@ BattleCommand BattleEngine::ai_ambush(int32_t fighter_idx) {
             return cmd;
         }
 
-        int32_t step = bfs_step_toward(fighter.grid_x, fighter.grid_y,
-                                        ambush_x, ambush_y,
-                                        get_movement_range(fighter_idx));
+        int32_t step = bfs_step_toward(fighter_idx, ambush_x, ambush_y);
         if (step >= 0 && step < 4) {
             constexpr int sdx[] = {0, 0, -1, 1};
             constexpr int sdy[] = {-1, 1, 0, 0};
@@ -1502,9 +1635,7 @@ BattleCommand BattleEngine::ai_chase(int32_t fighter_idx) {
         return cmd;
     }
 
-    int32_t step = bfs_step_toward(fighter.grid_x, fighter.grid_y,
-                                    target_fighter.grid_x, target_fighter.grid_y,
-                                    move_range);
+    int32_t step = bfs_step_toward(fighter_idx, target_fighter.grid_x, target_fighter.grid_y);
     if (step >= 0 && step < 4) {
         constexpr int sdx[] = {0, 0, -1, 1};
         constexpr int sdy[] = {-1, 1, 0, 0};
@@ -1525,49 +1656,83 @@ BattleCommand BattleEngine::ai_chase(int32_t fighter_idx) {
     return cmd;
 }
 
+// 撤退/防御性重定位落点选择 —— 对齐二进制 find_best_cell_terrain(FUN_0040144e.c:2047-2104)：
+//   · 预算（来自 FUN_0040124c.c:30-33 调 FUN_00418e29 的 param_3 = iVar3 + iVar2）：
+//       iVar3 = *(int*)(&DAT_0096cbbc + class*0xa0)  —— 运行时装载的兵种数组 offset-0 字段
+//                                                      （DAT_0096cbbc 由装载函数填充，不在 755 函数 RE 集）；
+//       iVar2 = FUN_0042b192(unit)                    —— 8 槽装备物品的最大移动加成
+//                                                      （DAT_00578d38[item*0x48]，FUN_0042b192.c:14-23）
+//     → 二进制预算 = 求和(兵种字段 + 物品移动加成)。
+//   · 干净层 get_movement_range (battle_engine.cpp:364-) 现 = cls.movement + max_item_bonus
+//     （求和 + 物品加成，已对齐二进制；分叉闭合）。证据见 FUN_0040124c.c:32 / FUN_0042b192.c:16-21。
+//   · 与 FUN_00418e29 加权洪泛 1:1 的证据见 test_movement_range.cpp / select_destination_cell 跨层闸门。
+//   · 在加权可达集（排除起点格）内 *最大化* 曼哈顿距离到敌人(attacker)
+//   · 地形旗标 ∈ {9,10,0xb} 额外 +9（FUN_0040144e.c:2088 `if(iVar5==9||10||0xb) local_10+=9`）
+//   · 平局取行优先首次遇到者（扫描序 y 外 x 内 + 严格 `>`）
+//   · 无更优候选（无可达非起点格分数>0）→ 返回起点格（上层发 WAIT）
+// 撤退目标敌人口径：对齐 FUN_0040144e —— 二进制以 fighter_array[param_1]+0x38 = attacker_index
+//   （即本层 RuntimeFighter.attacker，由 apply_damage 命中写回）为撤离远离对象；仅在 attacker 无效
+//   （<0 或越界或已非存活）时回退到 find_nearest_enemy（干净层原口径，兼容未受击场景与既有派发测试）。
+int32_t BattleEngine::select_retreat_cell(int32_t fighter_idx) {
+    const auto& fighter = state_.fighters[fighter_idx];
+    // 二进制守卫（FUN_0040144e.c）：attacker_index<0 或攻击者未激活(记录+0x3C active==0) → 不撤离。
+    // 本层等价：attacker<0 / 越界 / !is_fighter_alive(attacker) 时回退到最近敌人。
+    int32_t enemy_idx = fighter.attacker;
+    if (enemy_idx < 0 || enemy_idx >= BattleState::MAX_FIGHTERS ||
+        !is_fighter_alive(enemy_idx)) {
+        enemy_idx = find_nearest_enemy(fighter_idx);
+    }
+    if (enemy_idx < 0) return -1;   // 无敌人 → 不移动（对应 FUN_0040144e local_14=-1）
+
+    const auto& enemy = state_.fighters[enemy_idx];
+    calc_movement_range(fighter_idx);
+
+    int32_t ex = enemy.grid_x;
+    int32_t ey = enemy.grid_y;
+    int32_t start_cell = fighter.grid_y * state_.map_width + fighter.grid_x;
+
+    int32_t best_cell = start_cell;
+    int32_t best_score = 0;   // 对应 FUN_0040144e local_18 初值 0
+
+    for (int y = 0; y < state_.map_height; ++y) {
+        for (int x = 0; x < state_.map_width; ++x) {
+            int32_t cell = y * state_.map_width + x;
+            if (cell == start_cell) continue;            // 起点格不被选（二进制 g_pathfind_grid[start]=1 排除）
+            if (!state_.movement_mask[cell]) continue;    // 仅加权可达
+
+            int32_t dx = x - ex;
+            int32_t dy = y - ey;
+            int32_t score = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);  // 曼哈顿到敌人
+            int32_t flag = state_.grid_terrain[cell] & 0xF;
+            if (flag == 9 || flag == 10 || flag == 0xb) score += 9;     // 地形偏好（FUN_0040144e.c:2088）
+
+            if (score > best_score) {   // 严格 >，行优先首次胜（平局）
+                best_score = score;
+                best_cell = cell;
+            }
+        }
+    }
+    return best_cell;   // == start_cell ⇒ 无更优格，上层发 WAIT
+}
+
 BattleCommand BattleEngine::ai_retreat(int32_t fighter_idx) {
     BattleCommand cmd;
     cmd.fighter_idx = fighter_idx;
 
-    const auto& fighter = state_.fighters[fighter_idx];
     int32_t nearest = find_nearest_enemy(fighter_idx);
     if (nearest < 0) {
         cmd.type = BattleCommand::WAIT;
         return cmd;
     }
 
-    const auto& enemy = state_.fighters[nearest];
-    calc_movement_range(fighter_idx);
-
-    int32_t best_x = fighter.grid_x;
-    int32_t best_y = fighter.grid_y;
-    int32_t best_dist = 0;
-
-    int32_t edx = fighter.grid_x - enemy.grid_x;
-    int32_t edy = fighter.grid_y - enemy.grid_y;
-    int32_t cur_dist = edx * edx + edy * edy;
-
-    for (int y = 0; y < state_.map_height; ++y) {
-        for (int x = 0; x < state_.map_width; ++x) {
-            int32_t cell = y * state_.map_width + x;
-            if (!state_.movement_mask[cell]) continue;
-
-            int32_t dx = x - enemy.grid_x;
-            int32_t dy = y - enemy.grid_y;
-            int32_t dist_sq = dx * dx + dy * dy;
-
-            if (dist_sq > cur_dist && dist_sq > best_dist) {
-                best_dist = dist_sq;
-                best_x = x;
-                best_y = y;
-            }
-        }
-    }
-
-    if (best_x != fighter.grid_x || best_y != fighter.grid_y) {
+    int32_t cell = select_retreat_cell(fighter_idx);
+    const auto& fighter = state_.fighters[fighter_idx];
+    int32_t bx = cell % state_.map_width;
+    int32_t by = cell / state_.map_width;
+    if (cell >= 0 && (bx != fighter.grid_x || by != fighter.grid_y)) {
         cmd.type = BattleCommand::MOVE;
-        cmd.target_x = best_x;
-        cmd.target_y = best_y;
+        cmd.target_x = bx;
+        cmd.target_y = by;
     } else {
         cmd.type = BattleCommand::WAIT;
     }

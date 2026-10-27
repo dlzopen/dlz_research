@@ -43,7 +43,18 @@ public:
     // 获取对话文本 / Get dialogue text by entry index
     const std::string& get_dialogue_text(int32_t entry_index) const;
 
-    // 解析对话条目 / Parse dialogue entry to extract speaker and text
+    // 解析对话条目为「逐行」对话序列（铁律零实证，匹配二进制 FUN_0043cc96）。
+    // 一个 TXT.DAT 条目（raw，已剥 "NNN " 索引前缀、保留内嵌 '\n'）由多行组成，
+    // 每行独立带说话人代码（2 位数字或 "-1" 旁白）并（末行）以 "xx" 终止符结尾。
+    // 二进制 FUN_0043cc96 每次调用只解析「一行」（读前 2 字符作说话人码，
+    // FUN_0043e890 判数字：(c1-0x30)*10+(c2-0x30)=说话人 ID，非数字→旁白 -1），
+    // 上层用 DAT_0098d810 游标逐行推进；故原版是「条目=多行、每行独立说话人」。
+    // 本函数逐行 parse_dialogue_line 后返回（跳过纯空行/仅 "xx" 行），使播放层
+    // 每行作为独立 Dialogue 顺序推进——忠实于 binary 逐行模型。
+    static std::vector<core::Dialogue> parse_dialogue_entry(const std::string& raw);
+
+    // 向后兼容薄包装：返回 parse_dialogue_entry 的首条非空行 Dialogue。
+    // 历史调用方（单测、结局文本取首行等）仍按「单 Dialogue」消费，单行输入下与旧行为一致。
     static core::Dialogue parse_dialogue(const std::string& entry);
 
     // 根据fight_txt获取对话序列 / Resolve dialogue sequence from fight_txt
@@ -53,20 +64,6 @@ public:
     // 根据fight_txt获取战后对话序列 / Resolve post-battle SubB sequence from fight_txt
     // SubB = post-battle/alternate dialogue sequence
     std::vector<std::string> resolve_fight_dialogue_b(int32_t fight_txt) const;
-
-    // 条件对话链解析 / Conditional dialogue chain resolution
-    // Returns dialogue sequence based on game state (story_flags, level_phases)
-    // Implements FUN_00406CE8 chain logic: checks conditions to select alternate groups
-    std::vector<std::string> resolve_conditional_dialogue(
-        int32_t fight_txt,
-        const std::array<int32_t, 14>& story_flags,
-        int32_t level_phase) const;
-
-    // 检查对话链是否应该继续 / Check if dialogue chain should continue
-    // Returns next dialogue group index if chain continues, -1 if chain ends
-    int32_t get_chain_continuation(
-        int32_t current_group,
-        const std::array<int32_t, 14>& story_flags) const;
 
     // 获取对话总数 / Get total dialogue count
     int32_t dialogue_count() const { return static_cast<int32_t>(dialogues_.size()); }
@@ -78,22 +75,8 @@ private:
     // fight_txt → dialogue group 映射表（运行时从 dialogue_map.bin 载入，
     // 原版实测 16 项：{0x22,0x23,0x24,0x26,0x28,0x29,0x2A,0x2C,
     // 0x2E,0x31,0x32,0x33,0x35,0x2B,0x00,0x63}）。搜索命中取 position+2。
+    // 实证：FUN_0043c49f 搜 DAT_00448720[0..15]，命中 DAT_0098d808 = index+2。
     std::array<int32_t, 16> fight_txt_table_{};
-
-    // 条件分支表 / Conditional branch table
-    // [group][condition_type] = alternate_group
-    // condition_type: 0=story_flags[0], 1=story_flags[2], 2=level_phase>0
-    // 注：此表为早期分析推断，尚未逐字节与原版核对（TODO）。
-    static constexpr int32_t kConditionalBranches[8][3] = {
-        {0, 0, 0},  // Group 0: no alternate
-        {1, 7, 1},  // Group 1: if story_flags[0] → group 7, if level_phase>0 → group 1 (self-loop for phase)
-        {2, 6, 2},  // Group 2: if story_flags[0] → group 6, if level_phase>0 → group 2
-        {3, 3, 3},  // Group 3: no alternate
-        {4, 4, 4},  // Group 4: no alternate
-        {5, 5, 5},  // Group 5: no alternate
-        {2, 6, 2},  // Group 6: same as group 2
-        {1, 7, 1},  // Group 7: same as group 1
-    };
 };
 
 }  // namespace dlzr::logic

@@ -1,0 +1,328 @@
+// test_game_dat_content.cpp — GAME.DAT 关键战斗表的字节级内容闸门
+//
+// 铁律零实证：FUN_00424566.c 顺序装载 GAME.DAT 各块；DatLoader::load_game_data
+// 按已知偏移抽取。本测试不依赖 DatLoader 的逐字段解析做自洽，而是「独立从
+// GAME.DAT 原始字节抽取」同一段，与 DatLoader 产出逐字节对拍——若 DatLoader
+// 用了错误偏移/元素宽（如旧实现把地形表读成 40B/地形读穿相邻块的 bug），必红。
+//
+//   地形修正表 DiXingModifier  @ GAME.DAT +0x00A0  (16 × 20B = 16 × 5 int32)
+//   兵种地形移动消耗 BingZhongYiDong @ GAME.DAT +0x3F20 (96 × 16B uint8)
+//
+// 另含硬锚点（RE 实证，非自洽）：兵种0 移动消耗=[1×14,99,99]；兵种1 地形3/4=2。
+
+#include <gtest/gtest.h>
+
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <vector>
+
+#include "app/resource/dat_loader.hpp"
+#include "core/data_model/constants.hpp"
+#include "core/data_model/game_data.hpp"
+#include "logic/combat/combat_formulas.hpp"
+
+namespace {
+
+const char* kGameDataDir = "C:/seesaw/source/dlz_research/DLZFULL";
+
+// 独立抽取 GAME.DAT 原始字节（不经由 DatLoader 解析），作为字节级 oracle。
+std::vector<uint8_t> raw_gamedat_slice(const std::string& dir, size_t off, size_t n) {
+    std::ifstream f(std::string(dir) + "/GAME.DAT", std::ios::binary);
+    EXPECT_TRUE(f.good()) << "GAME.DAT 应可读";
+    f.seekg(static_cast<std::streamoff>(off));
+    std::vector<uint8_t> buf(n);
+    f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(n));
+    return buf;
+}
+
+}  // namespace
+
+// ---- 地形修正表（块#1）：GAME.DAT @0x00A0，16×20B(=5 int32) ----
+TEST(GameDatContent, TerrainModifierBytesMatchRaw) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_EQ(gd.terrain_modifiers.size(), 16u);
+
+    auto raw = raw_gamedat_slice(kGameDataDir, 0x00A0, 16u * 20u);
+    ASSERT_EQ(raw.size(), 16u * 20u);
+
+    for (int t = 0; t < 16; ++t) {
+        for (int j = 0; j < 5; ++j) {
+            int32_t file_val = 0;
+            std::memcpy(&file_val, &raw[static_cast<size_t>(t) * 20 + j * 4], 4);
+            EXPECT_EQ(gd.terrain_modifiers[t][j], file_val)
+                << "地形修正表[" << t << "][" << j
+                << "] 与 GAME.DAT@0x00A0 原始字节不符（DatLoader 偏移/元素宽回归？）";
+        }
+    }
+}
+
+// ---- 兵种地形移动消耗矩阵（块#3）：GAME.DAT @0x3F20，96×16B(uint8) ----
+TEST(GameDatContent, ClassMoveCostBytesMatchRaw) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_EQ(gd.class_move_cost.size(),
+              static_cast<size_t>(dlzr::core::MAX_CLASS_TYPES));
+
+    auto raw = raw_gamedat_slice(
+        kGameDataDir, 0x3F20,
+        static_cast<size_t>(dlzr::core::MAX_CLASS_TYPES) * 16u);
+    ASSERT_EQ(raw.size(), static_cast<size_t>(dlzr::core::MAX_CLASS_TYPES) * 16u);
+
+    for (int c = 0; c < dlzr::core::MAX_CLASS_TYPES; ++c) {
+        for (int terr = 0; terr < 16; ++terr) {
+            uint8_t file_val = raw[static_cast<size_t>(c) * 16u + terr];
+            EXPECT_EQ(gd.class_move_cost[c][terr], file_val)
+                << "移动消耗[" << c << "][" << terr
+                << "] 与 GAME.DAT@0x3F20 原始字节不符（DatLoader 偏移/元素宽回归？）";
+        }
+    }
+}
+
+// ---- 硬锚点（RE 实证，非自洽）：二进制实测值 ----
+TEST(GameDatContent, MoveCostKnownValuesMatchREEvidence) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+
+    // 兵种0：前 14 地形移动消耗=1，后 2 地形(14/15)=99 不可通行。
+    const uint8_t expect_cls0[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 99, 99};
+    for (int terr = 0; terr < 16; ++terr) {
+        EXPECT_EQ(gd.class_move_cost[0][terr], expect_cls0[terr])
+            << "兵种0 移动消耗[" << terr << "] 与 RE 实证 [1×14,99,99] 不符";
+    }
+    // 兵种1：地形3/4 移动消耗=2（RE 实证）。
+    EXPECT_EQ(gd.class_move_cost[1][3], 2);
+    EXPECT_EQ(gd.class_move_cost[1][4], 2);
+}
+
+// 取 GAME.DAT 中某记录从 off 起的 16 字节名称（GBK），作为字节级 oracle。
+static std::array<char, 16> raw_name_at(const std::string& dir, size_t off) {
+    auto buf = raw_gamedat_slice(dir, off, 16u);
+    std::array<char, 16> name{};
+    for (int i = 0; i < 16 && i < static_cast<int>(buf.size()); ++i) name[i] = static_cast<char>(buf[i]);
+    return name;
+}
+
+// ---- JiNeng（技能）记录对齐闸门 ----
+// RE 实证：GAME.DAT @0x75E4，48B 记录 = [8B 头][16B 名@+0x08][para1..anm_index 共 6 int32]。
+// 旧结构体漏 8B 头，致 name 与 para1.. 整体错位 8B（calc_skill_effect 读到的 para1/para2
+// 实为名称尾字节）。本测试钉死对齐：名称 = 文件 +0x08 的 16 字节，且 para1/para2/type 等
+// 等于文件真实值（非名称垃圾）。
+TEST(GameDatContent, JiNengNameAndParamsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.skills.size(), 0u);
+
+    // 名称位于记录 +0x08（前 8 字节为文件头）。
+    auto name_raw = raw_name_at(kGameDataDir, 0x75E4 + 8);
+    EXPECT_TRUE(std::memcmp(gd.skills[0].name.data(), name_raw.data(), 16) == 0)
+        << "skills[0].name 应与 GAME.DAT@0x75E4+8 的 16 字节一致（掠夺…）；"
+           "若错配为记录头，说明 JiNeng 结构体仍漏 8B 文件头。";
+
+    // 真实文件值（python 抽取 DLZFULL/GAME.DAT @0x75E4）：
+    //   para1=0, para2=0, type=7, select_range=5, apply_range=0, anm_index=-1。
+    EXPECT_EQ(gd.skills[0].para1, 0)
+        << "para1 应=文件真实值 0；若为名称尾字节(垃圾) 说明仍错位。";
+    EXPECT_EQ(gd.skills[0].para2, 0)
+        << "para2 应=文件真实值 0";
+    EXPECT_EQ(gd.skills[0].type, 7)
+        << "type 应=文件真实值 7（掠夺的技能类型）；若=0 说明仍错位 8B。";
+    EXPECT_EQ(gd.skills[0].select_range, 5);
+    EXPECT_EQ(gd.skills[0].apply_range, 0);
+    EXPECT_EQ(gd.skills[0].anm_index, -1);
+}
+
+// ---- DiLei（地雷）记录对齐闸门 ----
+// RE 实证：GAME.DAT @0x7404，48B 记录 = [8B 头][16B 名@+0x08][price,damage,effect_type,apply_range]。
+TEST(GameDatContent, DiLeiNameAndParamsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.mines.size(), 0u);
+
+    auto name_raw = raw_name_at(kGameDataDir, 0x7404 + 8);
+    EXPECT_TRUE(std::memcmp(gd.mines[0].name.data(), name_raw.data(), 16) == 0)
+        << "mines[0].name 应与 GAME.DAT@0x7404+8 的 16 字节一致（轰天雷…）；"
+           "若错配为记录头，说明 DiLei 结构体仍漏 8B 文件头。";
+
+    // 真实文件值（python 抽取 @0x7404）：price=800, damage=800, effect_type=0, apply_range=23。
+    EXPECT_EQ(gd.mines[0].price, 800);
+    EXPECT_EQ(gd.mines[0].damage, 800);
+    EXPECT_EQ(gd.mines[0].effect_type, 0);
+    EXPECT_EQ(gd.mines[0].apply_range, 23);
+}
+
+// ---- ClassType（兵种）名称偏移闸门（钉死 0x1E0，杜绝 data_dictionary 误标 0x0320）----
+// RE 实证：兵种表真实基址 0x1E0（class[1]=手枪队）；data_dictionary.md 误标 0x0320
+// （该处 class[1]=冲锋队）。本测试同时核对正确偏移内容、并断言不等于错误偏移内容。
+TEST(GameDatContent, ClassTypeNameOffsetCorrect) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.class_types.size(), 1u);
+
+    // 正确基址 0x1E0 + 兵种1 记录(160B) + 名称@+0x00。
+    auto correct = raw_name_at(kGameDataDir, 0x1E0 + 160u);
+    EXPECT_TRUE(std::memcmp(gd.class_types[1].name.data(), correct.data(), 16) == 0)
+        << "class_types[1].name 应=0x1E0+160 处 16 字节（手枪队…）";
+
+    // 错误基址 0x0320（data_dictionary 误标）处为冲锋队，必须不等于正确加载值。
+    auto wrong = raw_name_at(kGameDataDir, 0x0320 + 160u);
+    EXPECT_TRUE(std::memcmp(gd.class_types[1].name.data(), wrong.data(), 16) != 0)
+        << "class_types[1] 不应来自误标基址 0x0320（该处=冲锋队）；若相等说明偏移回归。";
+}
+
+// ---- wupin_compat（兵种×物品兼容矩阵）硬锚点 ----
+// RE：FUN_0042e2d6.c:257 武器映射 class1→物品100→WuPin[99]=转轮式手枪，
+// 故手枪队(class1) 可装备转轮式手枪(item99)：wupin_compat[99][1] != 0。
+TEST(GameDatContent, WuPinCompatRevolverUsableByPistolClass) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.wupin_compat.size(), 99u);
+
+    EXPECT_NE(gd.wupin_compat[99][1], 0)
+        << "wupin_compat[99][1] 应非零：手枪队(class1) 可装备转轮式手枪(item99)；"
+           "若为零说明兼容矩阵偏移/布局回归。";
+}
+
+// ---- 端到端：技能参数对齐 → 实际效果计算（可被玩家感知的 bug 闭环）----
+// 旧 JiNeng 结构体漏 8B 头，gd.skills[5].para1 实为名称尾字节（垃圾），
+// calc_skill_effect 用垃圾算技能 HP/士气效果。修正后 para1=180, para2=40（RE 实证 @0x75E4+5*48），
+// 施毒效果应 = (para1*智力/100)*factor。本测试钉死「对齐修复真正流入效果计算」。
+TEST(GameDatContent, SkillParamsFlowToEffectComputation) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.skills.size(), 5u);
+
+    // 施毒 (skill[5])：RE 实证 para1=180, para2=40。若仍错位，此断言必红。
+    ASSERT_EQ(gd.skills[5].para1, 180)
+        << "skills[5].para1 应=文件真实值 180（施毒）；若为名称垃圾说明仍漏 8B 头。";
+    ASSERT_EQ(gd.skills[5].para2, 40);
+
+    dlzr::core::People caster{};
+    caster.intelligence = 100;
+    int32_t skill_level = 1;            // factor = (1+7)>>3 = 1
+    auto eff = dlzr::logic::calc_skill_effect(caster, gd.skills[5], skill_level);
+    EXPECT_EQ(eff.hp_effect, (180 * 100 / 100) * 1)
+        << "技能 HP 效果应 = para1*智力/100*factor = 180；若错配为垃圾则不为 180。";
+    EXPECT_EQ(eff.morale_effect, (40 * 100 / 100) * 1)
+        << "技能士气效果应 = para2*智力/100*factor = 40。";
+}
+
+// =====================================================================
+// 防御性回归锚点：ClassType / WuPin / Material / People / Town 结构对齐
+// 目的：JiNeng/DiLei 曾因漏 8B 文件头而整体错位 8B（玩家可感知 bug，且交叉层
+// 差分测不出——clean/replica 同读错误加载）。同类 bug 可能发生在其他表；下列测试
+// 用「独立从原始字节抽取」逐字段对拍，钉死每条表的名称偏移与关键数值字段对齐，
+// 任何未来的偏移/步长回归都会立即红。
+// =====================================================================
+
+// ClassType：GAME.DAT @0x1E0，160B 记录步长，名称@+0x00（无文件头；与 JiNeng/DiLei 不同）。
+TEST(GameDatContent, ClassTypeFieldsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.class_types.size(), 1u);
+
+    // 名称@+0x00 应与原始字节一致（铁证：class[1]=手枪队，非误标基址 0x0320 的冲锋队）。
+    auto name0 = raw_name_at(kGameDataDir, 0x1E0 + 0u * 160u);
+    auto name1 = raw_name_at(kGameDataDir, 0x1E0 + 1u * 160u);
+    EXPECT_TRUE(std::memcmp(gd.class_types[0].name.data(), name0.data(), 16) == 0)
+        << "class_types[0].name 应=@0x1E0 的 16 字节（神仙队…）";
+    EXPECT_TRUE(std::memcmp(gd.class_types[1].name.data(), name1.data(), 16) == 0)
+        << "class_types[1].name 应=@0x1E0+160 的 16 字节（手枪队…）";
+
+    // 关键数值字段（python 抽取 DLZFULL/GAME.DAT 实测）：
+    //   [0] 神仙队: img=81, hp_base=1000, hp_growth=100, atk_growth=99, movement=8
+    //   [1] 手枪队: img=30, hp_base=80,  hp_growth=12,  atk_growth=6,  movement=4
+    EXPECT_EQ(gd.class_types[0].img_index, 81);
+    EXPECT_EQ(gd.class_types[0].hp_base, 1000);
+    EXPECT_EQ(gd.class_types[0].hp_growth, 100);
+    EXPECT_EQ(gd.class_types[0].attack_growth, 99);
+    EXPECT_EQ(gd.class_types[0].movement, 8);
+    EXPECT_EQ(gd.class_types[1].img_index, 30);
+    EXPECT_EQ(gd.class_types[1].hp_base, 80);
+    EXPECT_EQ(gd.class_types[1].hp_growth, 12);
+    EXPECT_EQ(gd.class_types[1].attack_growth, 6);
+    EXPECT_EQ(gd.class_types[1].movement, 4);
+}
+
+// WuPin（物品）：GAME.DAT @0x43E0，72B 记录步长，名称@+0x00。
+TEST(GameDatContent, WuPinFieldsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.items.size(), 99u);
+
+    // WuPin[99]=转轮式手枪（名称含全角空格，逐字节对拍最稳）。
+    auto name99 = raw_name_at(kGameDataDir, 0x43E0 + 99u * 72u);
+    EXPECT_TRUE(std::memcmp(gd.items[99].name.data(), name99.data(), 16) == 0)
+        << "items[99].name 应=@0x43E0+99*72 的 16 字节（转轮式手　枪…）";
+
+    // 关键数值：price=300（python 抽取实测）。
+    EXPECT_EQ(gd.items[99].price, 300)
+        << "items[99].price 应=300（转轮式手枪）；若错位则不为 300。";
+}
+
+// Material（锻造材料）：GAME.DAT @0x7260，32B 记录步长，名称@+0x00。
+TEST(GameDatContent, MaterialNameAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.materials.size(), 0u);
+
+    auto name0 = raw_name_at(kGameDataDir, 0x7260);
+    EXPECT_TRUE(std::memcmp(gd.materials[0].name.data(), name0.data(), 16) == 0)
+        << "materials[0].name 应=@0x7260 的 16 字节（雷…）";
+}
+
+// People（PEOPLE.DAT）：132B 记录步长，名称@+0x00，class_type@+0x2C。
+TEST(GameDatContent, PeopleFieldsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GT(gd.people.size(), 1u);
+
+    auto name0 = raw_name_at(kGameDataDir, 0u * 132u);       // 注意：读自 PEOPLE.DAT
+    // PEOPLE.DAT 与 GAME.DAT 不同文件；复用 raw_name_at 需指定文件，故内联读取。
+    {
+        std::ifstream f(std::string(kGameDataDir) + "/PEOPLE.DAT", std::ios::binary);
+        EXPECT_TRUE(f.good());
+        std::array<char, 16> buf{};
+        f.read(buf.data(), 16);
+        EXPECT_TRUE(std::memcmp(gd.people[0].name.data(), buf.data(), 16) == 0)
+            << "people[0].name 应=PEOPLE.DAT@0 的 16 字节（孙悟空…）";
+        f.seekg(0x2C);
+        int32_t ct = 0;
+        f.read(reinterpret_cast<char*>(&ct), 4);
+        EXPECT_EQ(gd.people[0].class_type, ct)
+            << "people[0].class_type 应与 PEOPLE.DAT@0x2C 一致（孙悟空=0…神仙队）";
+        EXPECT_EQ(gd.people[0].class_type, 0);
+    }
+    // 第二人：朱老忠，class_type=4（步枪队）。
+    {
+        std::ifstream f(std::string(kGameDataDir) + "/PEOPLE.DAT", std::ios::binary);
+        EXPECT_TRUE(f.good());
+        std::array<char, 16> buf{};
+        f.seekg(1u * 132u);
+        f.read(buf.data(), 16);
+        EXPECT_TRUE(std::memcmp(gd.people[1].name.data(), buf.data(), 16) == 0)
+            << "people[1].name 应=PEOPLE.DAT@132 的 16 字节（朱老忠…）";
+        f.seekg(1u * 132u + 0x2C);
+        int32_t ct = 0;
+        f.read(reinterpret_cast<char*>(&ct), 4);
+        EXPECT_EQ(gd.people[1].class_type, 4)
+            << "people[1].class_type 应=4（朱老忠→步枪队）；若错位则不为 4。";
+    }
+}
+
+// Town（TOWN.DAT）：346B 记录步长，#pragma pack(1)。Town[0] 固定字段对拍。
+TEST(GameDatContent, TownFieldsAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    loader.load_towns(gd);
+    ASSERT_GT(gd.towns.size(), 0u);
+
+    // python 抽取 TOWN.DAT[0]：reserved0=0, reserved1=-1, sound1_id=803, flags[1]=1。
+    EXPECT_EQ(gd.towns[0].reserved0, 0);
+    EXPECT_EQ(gd.towns[0].reserved1, -1);
+    EXPECT_EQ(gd.towns[0].sound1_id, 803);
+    ASSERT_GT(gd.towns[0].flags.size(), 1u);
+    EXPECT_EQ(gd.towns[0].flags[1], 1u);
+}

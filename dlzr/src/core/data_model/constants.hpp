@@ -49,9 +49,12 @@ constexpr int32_t STRENGTH_OFFSET = 500;
 // 技能等级查找表 / Skill level lookup
 // skill_exp → skill_level: {0,1,3,6,10,15,21,28,36,45,55}
 // ============================================================
-constexpr int32_t SKILL_LEVEL_COUNT = 11;
+// 二进制 0x00419CA4 的阈值表为 10 项（DAT_00447280，10 个 uint）。
+// 注意：clean 早期曾误加第 11 项 55 并改用"从高桶往下找首个 >= "算法，与原版相反；
+// 跨层差分测试 CrossLayerDiff.SkillLevelBucket 已锁定为二进制真值（首个 skill_use < threshold[i]，否则 10）。
+constexpr int32_t SKILL_LEVEL_COUNT = 10;
 inline constexpr int32_t SKILL_LEVEL_THRESHOLDS[SKILL_LEVEL_COUNT] = {
-    0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55
+    0, 1, 3, 6, 10, 15, 21, 28, 36, 45
 };
 
 // ============================================================

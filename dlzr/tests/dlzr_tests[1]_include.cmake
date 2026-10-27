@@ -1,0 +1,5 @@
+if(EXISTS "C:/seesaw/source/dlz_research/dlzr/tests/dlzr_tests[1]_tests.cmake")
+  include("C:/seesaw/source/dlz_research/dlzr/tests/dlzr_tests[1]_tests.cmake")
+else()
+  add_test(dlzr_tests_NOT_BUILT dlzr_tests_NOT_BUILT)
+endif()

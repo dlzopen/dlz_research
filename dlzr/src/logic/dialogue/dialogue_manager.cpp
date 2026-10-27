@@ -108,9 +108,13 @@ std::vector<std::string> DialogueManager::resolve_fight_dialogue(int32_t fight_t
     for (int32_t entry_id : sub_a) {
         if (entry_id == 0) break;
         if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
-            // Skip entries that are empty or just the "xx" terminator
-            core::Dialogue d = parse_dialogue(dialogues_[entry_id]);
-            if (!d.text.empty()) {
+            // 跳过纯空 / 仅 "xx" 的条目：逐行解析后任一行为非空即视为有内容。
+            auto lines = parse_dialogue_entry(dialogues_[entry_id]);
+            bool has_content = false;
+            for (const auto& d : lines) {
+                if (!d.text.empty()) { has_content = true; break; }
+            }
+            if (has_content) {
                 result.push_back(dialogues_[entry_id]);
             }
         }
@@ -128,8 +132,12 @@ std::vector<std::string> DialogueManager::resolve_fight_dialogue_b(int32_t fight
     for (int32_t entry_id : sub_b) {
         if (entry_id == 0) break;
         if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
-            core::Dialogue d = parse_dialogue(dialogues_[entry_id]);
-            if (!d.text.empty()) {
+            auto lines = parse_dialogue_entry(dialogues_[entry_id]);
+            bool has_content = false;
+            for (const auto& d : lines) {
+                if (!d.text.empty()) { has_content = true; break; }
+            }
+            if (has_content) {
                 result.push_back(dialogues_[entry_id]);
             }
         }
@@ -145,123 +153,68 @@ const std::string& DialogueManager::get_dialogue_text(int32_t entry_index) const
     return dialogues_[entry_index];
 }
 
-std::vector<std::string> DialogueManager::resolve_conditional_dialogue(
-    int32_t fight_txt,
-    const std::array<int32_t, 14>& story_flags,
-    int32_t level_phase) const {
+namespace {
 
-    int32_t base_group = get_dialogue_group(fight_txt);
-    int32_t resolved_group = base_group;
+// 解析单行对话：抽前 2 字符作说话人代码（2 位 ASCII 数字 / "-1" 旁白），剥末位 "xx" 终止符。
+// 实证：FUN_0043cc96.c:21-49 读前 2 字符作说话人码（FUN_0043e890 判数字，
+//   (c1-0x30)*10+(c2-0x30)=说话人 ID；非数字 / '-' / 'a' / 'b' → 旁白 -1）；
+// "xx" 终止符在二进制侧由 FUN_0043c9ec 在条目级消费，clean 模型（xx 保留在末行）显式剥离。
+dlzr::core::Dialogue parse_dialogue_line(const std::string& line) {
+    dlzr::core::Dialogue d;
+    d.speaker_id = -1;
+    if (line.empty()) return d;
 
-    // Check conditional branches (FUN_00406CE8 logic)
-    // Priority: story_flags[2] > story_flags[0] > level_phase
-    if (base_group >= 0 && base_group < 8) {
-        // Check condition 1: story_flags[2] (DAT_0095eb00)
-        if (kConditionalBranches[base_group][1] != base_group &&
-            story_flags[2] > 0) {
-            resolved_group = kConditionalBranches[base_group][1];
-        }
-        // Check condition 0: story_flags[0]
-        else if (kConditionalBranches[base_group][0] != base_group &&
-                 story_flags[0] > 0) {
-            resolved_group = kConditionalBranches[base_group][0];
-        }
-        // Check condition 2: level_phase > 0 (for multi-phase dialogues)
-        else if (kConditionalBranches[base_group][2] != base_group &&
-                 level_phase > 0) {
-            resolved_group = kConditionalBranches[base_group][2];
-        }
+    std::string body = line;
+
+    // 抽说话人代码：必须 2 位 ASCII 数字，或 "-1"；其余（含全角起头、单数字）视为无代码旁白。
+    if (line.size() >= 2 && line[0] == '-' && line[1] == '1') {
+        d.speaker_id = -1;
+        body = line.substr(2);
+    } else if (line.size() >= 2 && std::isdigit(static_cast<unsigned char>(line[0])) &&
+               std::isdigit(static_cast<unsigned char>(line[1]))) {
+        d.speaker_id = (line[0] - '0') * 10 + (line[1] - '0');
+        body = line.substr(2);
     }
+    // else: 无代码 → 旁白，body 保持整行。
 
-    // Resolve the selected group's SubA sequence
-    std::vector<std::string> result;
-    const auto& sub_a = dialogue_groups_[resolved_group].sub_a;
-
-    for (int32_t entry_id : sub_a) {
-        if (entry_id == 0) break;
-        if (entry_id > 0 && entry_id < static_cast<int32_t>(dialogues_.size())) {
-            result.push_back(dialogues_[entry_id]);
-        }
-    }
-
-    return result;
-}
-
-int32_t DialogueManager::get_chain_continuation(
-    int32_t current_group,
-    const std::array<int32_t, 14>& story_flags) const {
-
-    // Chain continuation logic (FUN_00406F96)
-    // After completing SubA of current group, check if SubB should follow
-    // or if chain should jump to another group
-
-    if (current_group < 0 || current_group >= core::DIALOGUE_GROUP_COUNT) {
-        return -1;
-    }
-
-    // Check if SubB is non-empty (chain continues within same group)
-    const auto& sub_b = dialogue_groups_[current_group].sub_b;
-    if (sub_b[0] != 0) {
-        return current_group;  // SubB will be played after SubA
-    }
-
-    // Check for cross-group chains based on story flags
-    // Group 1 → Group 7 if story_flags[1] set
-    if (current_group == 1 && story_flags.size() > 1 && story_flags[1] > 0) {
-        return 7;
-    }
-
-    // Group 2 → Group 6 if story_flags[2] set
-    if (current_group == 2 && story_flags.size() > 2 && story_flags[2] > 0) {
-        return 6;
-    }
-
-    return -1;  // Chain ends
-}
-
-core::Dialogue DialogueManager::parse_dialogue(const std::string& entry) {
-    core::Dialogue dialogue;
-    dialogue.speaker_id = -1;  // Default to narrator
-
-    // TXT.DAT format (verified against decrypted binary):
-    //   "speaker_code text" with the speaker code GLUED to the text
-    //   (no separating space). speaker_code is "-1" (narration) or a
-    //   2-digit value 00-99 (ally/enemy/named character id).
-    // Token markers inside text: AA..AA=ally name, BB..BB=enemy name,
-    //   CC..CC=item/tech, DD..DD=place, GG=protagonist (substituted before
-    //   render), TT=battle/place token, and "xx"=entry terminator.
-    if (entry.empty()) {
-        dialogue.text = entry;
-        return dialogue;
-    }
-
-    std::string body = entry;
-
-    // Extract glued speaker code
-    if (entry.size() >= 2 && entry[0] == '-' && entry[1] == '1') {
-        dialogue.speaker_id = -1;
-        body = entry.substr(2);
-    } else if (entry.size() >= 2 && std::isdigit(static_cast<unsigned char>(entry[0])) &&
-               std::isdigit(static_cast<unsigned char>(entry[1]))) {
-        try {
-            dialogue.speaker_id = std::stoi(entry.substr(0, 2));
-        } catch (...) {
-            dialogue.speaker_id = -1;
-        }
-        body = entry.substr(2);
-    }
-    // else: no speaker code (e.g. a bare "xx" terminator line) -> narrator
-
-    // Strip the "xx" terminator marker (ASCII, may be glued to end of text)
+    // 剥 "xx" 终止符（出现在末行尾，粘连无空格）。
     if (body.size() >= 2 && body[body.size() - 2] == 'x' && body[body.size() - 1] == 'x') {
         body = body.substr(0, body.size() - 2);
     }
-    if (body == "xx") {
-        body.clear();
-    }
+    if (body == "xx") body.clear();
 
-    dialogue.text = body;
-    return dialogue;
+    d.text = body;
+    return d;
+}
+
+}  // namespace
+
+std::vector<core::Dialogue> DialogueManager::parse_dialogue_entry(const std::string& raw) {
+    std::vector<core::Dialogue> out;
+    // 条目体可能含内嵌换行（视觉折行）；按 '\n' 拆行，每行独立解析
+    // （匹配二进制 FUN_0043cc96 逐行模型：DAT_0098d810 游标逐行推进）。
+    size_t start = 0;
+    while (true) {
+        size_t nl = raw.find('\n', start);
+        std::string line = (nl == std::string::npos) ? raw.substr(start)
+                                                    : raw.substr(start, nl - start);
+        core::Dialogue d = parse_dialogue_line(line);
+        if (!d.text.empty()) out.push_back(std::move(d));
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return out;
+}
+
+core::Dialogue DialogueManager::parse_dialogue(const std::string& entry) {
+    // 向后兼容薄包装：返回首条非空行 Dialogue（单行输入下与旧行为一致）。
+    core::Dialogue fallback;
+    fallback.speaker_id = -1;
+    auto lines = parse_dialogue_entry(entry);
+    for (const auto& d : lines) {
+        if (!d.text.empty()) return d;
+    }
+    return fallback;
 }
 
 }  // namespace dlzr::logic

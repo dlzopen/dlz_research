@@ -42,6 +42,10 @@ struct RuntimeFighter {
     int32_t skill_attack{0};            // 基础攻击技能使用次数 / Basic attack skill exp
     std::array<uint8_t, 8> items{};     // 物品栏 / Item slots
     std::array<uint8_t, 8> mines{};     // 地雷栏 / Mine slots
+
+    int32_t attacker{-1};         // 正在攻击本单位的敌人索引 / Index of unit currently attacking this one
+                                  // 二进制 fighter 记录 +0x38 = attacker_index（FUN_0040144e.c 撤退目标）；
+                                  // 由 BattleEngine::apply_damage 命中写回。
 };
 
 // ============================================================

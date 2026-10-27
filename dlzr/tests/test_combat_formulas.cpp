@@ -271,13 +271,15 @@ TEST(CombatFormulas, Defense_LowDefModifier) {
     EXPECT_GT(full, half);
 }
 
+// 二进制 0x0042A98E：地形防御加成仅在 mode==0x96（战斗）时施加；
+// 非战斗模式不加地形/士气/defmod。此前该测试用 false 期望加地形是错期望，已修正。
 TEST(CombatFormulas, Defense_TerrainBonus) {
     auto p = make_person(50, 50, 5);
     auto c = make_class(100, 10, 5, 3, 50, 30);
-    auto f = make_fighter();
+    auto f = make_fighter();   // morale=100, def_mod=100（战斗模式无缩放失真）
 
-    int32_t no_terrain = calc_defense(p, c, f, 0, false);
-    int32_t with_terrain = calc_defense(p, c, f, 50, false);
+    int32_t no_terrain = calc_defense(p, c, f, 0, true);
+    int32_t with_terrain = calc_defense(p, c, f, 50, true);
 
     EXPECT_GT(with_terrain, no_terrain);
     EXPECT_EQ(with_terrain, no_terrain + no_terrain * 50 / 100);
@@ -317,51 +319,54 @@ TEST(CombatFormulas, Defense_Terrain100Percent) {
     auto f = make_fighter();
 
     int32_t base = calc_defense(p, c, f, 0, false);
-    int32_t max_terrain = calc_defense(p, c, f, 100, false);
+    int32_t max_terrain = calc_defense(p, c, f, 100, true);
 
     EXPECT_EQ(max_terrain, base * 2);
 }
 
 // ============================================================
 // 技能等级测试 / Skill level lookup tests
+// 严格对齐二进制 0x00419CA4（首个 skill_use < threshold[i]，否则 10）。
+// 与 replica::battle_calc_skill_level 逐位一致。
 // ============================================================
 TEST(CombatFormulas, SkillLevel_Zero) {
-    EXPECT_EQ(get_skill_level(0), 0);
+    EXPECT_EQ(get_skill_level(0), 1);
 }
 
 TEST(CombatFormulas, SkillLevel_ExactThresholds) {
-    EXPECT_EQ(get_skill_level(0), 0);
-    EXPECT_EQ(get_skill_level(1), 1);
-    EXPECT_EQ(get_skill_level(3), 2);
-    EXPECT_EQ(get_skill_level(6), 3);
-    EXPECT_EQ(get_skill_level(10), 4);
-    EXPECT_EQ(get_skill_level(15), 5);
-    EXPECT_EQ(get_skill_level(21), 6);
-    EXPECT_EQ(get_skill_level(28), 7);
-    EXPECT_EQ(get_skill_level(36), 8);
-    EXPECT_EQ(get_skill_level(45), 9);
-    EXPECT_EQ(get_skill_level(55), 10);
+    EXPECT_EQ(get_skill_level(0), 1);
+    EXPECT_EQ(get_skill_level(1), 2);
+    EXPECT_EQ(get_skill_level(3), 3);
+    EXPECT_EQ(get_skill_level(6), 4);
+    EXPECT_EQ(get_skill_level(10), 5);
+    EXPECT_EQ(get_skill_level(15), 6);
+    EXPECT_EQ(get_skill_level(21), 7);
+    EXPECT_EQ(get_skill_level(28), 8);
+    EXPECT_EQ(get_skill_level(36), 9);
+    EXPECT_EQ(get_skill_level(45), 10);
 }
 
 TEST(CombatFormulas, SkillLevel_BetweenThresholds) {
-    EXPECT_EQ(get_skill_level(2), 1);
-    EXPECT_EQ(get_skill_level(5), 2);
-    EXPECT_EQ(get_skill_level(9), 3);
-    EXPECT_EQ(get_skill_level(14), 4);
-    EXPECT_EQ(get_skill_level(20), 5);
-    EXPECT_EQ(get_skill_level(27), 6);
-    EXPECT_EQ(get_skill_level(35), 7);
-    EXPECT_EQ(get_skill_level(44), 8);
-    EXPECT_EQ(get_skill_level(54), 9);
+    EXPECT_EQ(get_skill_level(2), 2);
+    EXPECT_EQ(get_skill_level(5), 3);
+    EXPECT_EQ(get_skill_level(9), 4);
+    EXPECT_EQ(get_skill_level(14), 5);
+    EXPECT_EQ(get_skill_level(20), 6);
+    EXPECT_EQ(get_skill_level(27), 7);
+    EXPECT_EQ(get_skill_level(35), 8);
+    EXPECT_EQ(get_skill_level(44), 9);
 }
 
 TEST(CombatFormulas, SkillLevel_AboveMax) {
+    EXPECT_EQ(get_skill_level(46), 10);
     EXPECT_EQ(get_skill_level(100), 10);
     EXPECT_EQ(get_skill_level(9999), 10);
 }
 
-TEST(CombatFormulas, SkillLevel_NegativeClamp) {
-    EXPECT_EQ(get_skill_level(-1), 0);
+// 二进制以 uint 读 skill_use：-1 经 uint 环绕成大数 → 返回 10（与 oracle 一致）。
+// 调用方传入的 usage 计数恒 >=0，此分支仅作边界保真。
+TEST(CombatFormulas, SkillLevel_NegativeAsUint) {
+    EXPECT_EQ(get_skill_level(-1), 10);
 }
 
 // ============================================================
@@ -462,43 +467,72 @@ TEST(CombatFormulas, SkillEffect_SkillLevelScaling) {
 }
 
 // ============================================================
-// 经验值测试 / Experience calculation tests
+// 经验值测试 / Experience calculation tests  (RE: 0x0042AA92 / 0x0042AB23 / 0x00429E92)
+// 二进制无 base_exp：经验纯由"等级差"分桶决定。
 // ============================================================
-TEST(CombatFormulas, Experience_SameLevel) {
-    EXPECT_EQ(calc_experience(5, 5, 100), 100);
+TEST(CombatFormulas, AttackExp_SameLevel) {
+    EXPECT_EQ(calc_attack_exp(5, 5), 8);       // diff=0 → 8
 }
 
-TEST(CombatFormulas, Experience_LowerKiller) {
-    EXPECT_EQ(calc_experience(3, 8, 100), 150);
+TEST(CombatFormulas, AttackExp_DefenderHigher) {
+    EXPECT_EQ(calc_attack_exp(3, 8), 32);      // diff=5 → 48 → cap 32
+    EXPECT_EQ(calc_attack_exp(1, 10), 32);     // diff=9 → 80 → cap 32
 }
 
-TEST(CombatFormulas, Experience_MuchLowerKiller) {
-    EXPECT_EQ(calc_experience(1, 10, 100), 200);
+TEST(CombatFormulas, AttackExp_DefenderLower) {
+    EXPECT_EQ(calc_attack_exp(8, 5), 4);       // diff=-3 → 4
+    EXPECT_EQ(calc_attack_exp(5, 1), 2);       // diff=-4 → 2
+    EXPECT_EQ(calc_attack_exp(20, 5), 1);      // diff=-15 → 1
 }
 
-TEST(CombatFormulas, Experience_HigherKiller) {
-    EXPECT_EQ(calc_experience(8, 5, 100), 100);   // diff=3, <5 → 1.0x
-    EXPECT_EQ(calc_experience(12, 5, 100), 75);   // diff=7, <10 → 0.75x
+TEST(CombatFormulas, KillExp_SameLevel) {
+    EXPECT_EQ(calc_kill_exp(5, 5), 12);        // diff=0 → 12
 }
 
-TEST(CombatFormulas, Experience_MuchHigherKiller) {
-    EXPECT_EQ(calc_experience(20, 5, 100), 50);
+TEST(CombatFormulas, KillExp_VictimHigher) {
+    EXPECT_EQ(calc_kill_exp(3, 8), 80);        // diff=5 → 80
+    EXPECT_EQ(calc_kill_exp(1, 10), 80);       // diff=9 → 144 → cap 80
 }
 
-TEST(CombatFormulas, Experience_LevelDiffBoundary) {
-    EXPECT_EQ(calc_experience(5, 0, 100), 75);     // diff=5, <10 → 0.75x
-    EXPECT_EQ(calc_experience(5, 1, 100), 100);    // diff=4, <5 → 1.0x
-    EXPECT_EQ(calc_experience(5, 10, 100), 150);   // diff=-5, <0 → 1.5x
-    EXPECT_EQ(calc_experience(5, 15, 100), 200);   // diff=-10, <-5 → 2.0x
+TEST(CombatFormulas, KillExp_VictimLower) {
+    EXPECT_EQ(calc_kill_exp(8, 5), 4);         // diff=-3 → 4
+    EXPECT_EQ(calc_kill_exp(20, 5), 1);        // diff=-15 → 1
 }
 
-TEST(CombatFormulas, Experience_ZeroBase) {
-    EXPECT_EQ(calc_experience(5, 5, 0), 0);
+TEST(CombatFormulas, LevelUp_NoLevelUp) {
+    dlzr::core::People p{};
+    p.experience = 50; p.level = 5;
+    bool lu = apply_experience_gain(p, 30);    // total=80
+    EXPECT_FALSE(lu);
+    EXPECT_EQ(p.experience, 80);
+    EXPECT_EQ(p.level, 5);
 }
 
-TEST(CombatFormulas, Experience_IntegerDivision) {
-    int32_t result = calc_experience(5, 5, 7);
-    EXPECT_EQ(result, 7);
+TEST(CombatFormulas, LevelUp_Single) {
+    dlzr::core::People p{};
+    p.experience = 80; p.level = 5;
+    bool lu = apply_experience_gain(p, 30);    // total=110 → +1 级
+    EXPECT_TRUE(lu);
+    EXPECT_EQ(p.experience, 10);
+    EXPECT_EQ(p.level, 6);
+}
+
+TEST(CombatFormulas, LevelUp_MultiAndCap) {
+    dlzr::core::People p{};
+    p.experience = 90; p.level = 98;
+    bool lu = apply_experience_gain(p, 500);   // total=590 → +5 级，封顶 99
+    EXPECT_TRUE(lu);
+    EXPECT_EQ(p.experience, 90);               // 590 % 100
+    EXPECT_EQ(p.level, 99);
+}
+
+TEST(CombatFormulas, LevelUp_ExactBoundary) {
+    dlzr::core::People p{};
+    p.experience = 99; p.level = 1;
+    bool lu = apply_experience_gain(p, 1);     // total=100 → +1 级
+    EXPECT_TRUE(lu);
+    EXPECT_EQ(p.experience, 0);
+    EXPECT_EQ(p.level, 2);
 }
 
 // ============================================================
@@ -508,12 +542,14 @@ TEST(CombatFormulas, Damage_NormalCase) {
     EXPECT_EQ(calc_damage(100, 30), 70);
 }
 
-TEST(CombatFormulas, Damage_MinimumOne) {
-    EXPECT_EQ(calc_damage(10, 100), 1);
+// RE: 0x0042784B — 攻击<防御时二进制返回 0（基础伤害 incoming=0），不是旧实现的 1。
+TEST(CombatFormulas, Damage_AttackBelowDefense) {
+    EXPECT_EQ(calc_damage(10, 100), 0);
 }
 
-TEST(CombatFormulas, Damage_EqualPower) {
-    EXPECT_EQ(calc_damage(50, 50), 1);
+// RE: 0x0042784B — 攻防相等时防御不<攻击，守卫不成立，返回 incoming=0（非 1）。
+TEST(CombatFormulas, Damage_Equal) {
+    EXPECT_EQ(calc_damage(50, 50), 0);
 }
 
 TEST(CombatFormulas, Damage_JustAbove) {
@@ -526,6 +562,19 @@ TEST(CombatFormulas, Damage_HighAttack) {
 
 TEST(CombatFormulas, Damage_ZeroDefense) {
     EXPECT_EQ(calc_damage(50, 0), 50);
+}
+
+// 0x0042784B 的 incoming 语义（max）：既有伤害与攻击−防御取大，且仅当攻击>防御生效。
+TEST(CombatFormulas, Damage_IncomingLargerKept) {     // inc(200) > 攻击−防御(70) → 保留 200
+    EXPECT_EQ(calc_damage(100, 30, 200), 200);
+}
+
+TEST(CombatFormulas, Damage_IncomingSmallerReplaced) { // inc(50) <= 攻击−防御(70) 且攻击>防御 → 替换为 70
+    EXPECT_EQ(calc_damage(100, 30, 50), 70);
+}
+
+TEST(CombatFormulas, Damage_IncomingKeptWhenAttackLeDef) { // 攻击<=防御 → 守卫不生效，返回 incoming(5)
+    EXPECT_EQ(calc_damage(10, 100, 5), 5);
 }
 
 // ============================================================
@@ -628,5 +677,64 @@ TEST(CombatFormulas, ItemBonus_SlotRange) {
     gd.wupin_compat[119][2] = 1;
     EXPECT_EQ(get_item_attack_bonus(p, gd), 60);
     EXPECT_EQ(get_item_defense_bonus(p, gd), 33);
+}
+
+// ============================================================
+// 命中判定测试 / Hit chance tests (RE: 0x0042ABB0 / 0x0042AC0B)
+// 确定性边界：命中率 >= 100（智力差 >= 35）→ 必中；命中率 <= 0（智力差 <= -15）→ 必不中。
+// 中间区为随机（rand_impl()%100），由 test_cross_layer_diff.cpp 的 2 万次对拍覆盖。
+// ============================================================
+TEST(CombatFormulas, HitChance_AlwaysHit) {
+    auto atk = make_person(0, 100, 1);  // intelligence 100
+    auto def = make_person(0, 0, 1);    // intelligence 0
+    // rate = (100-0)*2+30 = 230 >= 100 → 任意 roll(0..99) < 230 恒真
+    for (int i = 0; i < 50; ++i) EXPECT_EQ(calc_hit_chance(atk, def), 1);
+}
+
+TEST(CombatFormulas, HitChance_AlwaysMiss) {
+    auto atk = make_person(0, 0, 1);    // intelligence 0
+    auto def = make_person(0, 20, 1);   // intelligence 20
+    // rate = (0-20)*2+30 = -10 → clamp 0 → 任意 roll < 0 恒假
+    for (int i = 0; i < 50; ++i) EXPECT_EQ(calc_hit_chance(atk, def), 0);
+}
+
+TEST(CombatFormulas, HitChance_WeaponBonusRaisesRate) {
+    // 武器版在基础命中率上 += 技能等级（已分桶），公式上严格 >= 基础版。
+    auto atk = make_person(0, 50, 1);
+    atk.skill_lueduo = 45;              // 分桶后 = 10
+    auto def = make_person(0, 30, 1);
+    int32_t sl = get_skill_level(atk.skill_lueduo);
+    EXPECT_EQ(sl, 10);
+    int32_t base_rate = (50 - 30) * 2 + 30;   // 70
+    int32_t wpn_rate  = base_rate + sl;        // 80
+    EXPECT_GT(wpn_rate, base_rate);
+}
+
+// ============================================================
+// 资源增减夹取测试 / Clamp resource delta tests (RE: 0x00427830)
+// 二进制仅封顶（min(cap, base+delta)），无下界夹取。
+// ============================================================
+TEST(CombatFormulas, ClampResource_HealWithinCap) {
+    // HP 修复：base=50, +20, 封顶 100 → 70
+    EXPECT_EQ(clamp_stat_delta(50, 20, 100), 70);
+}
+
+TEST(CombatFormulas, ClampResource_CapExceeded) {
+    // base=90, +30 → 120 > 100 → 取封顶 100
+    EXPECT_EQ(clamp_stat_delta(90, 30, 100), 100);
+}
+
+TEST(CombatFormulas, ClampResource_ZeroDelta) {
+    EXPECT_EQ(clamp_stat_delta(50, 0, 100), 50);
+}
+
+TEST(CombatFormulas, ClampResource_NoLowerClamp) {
+    // 二进制无下界夹取：base=10, delta=-5 → 5（不夹到 0）。诚实记录真实行为。
+    EXPECT_EQ(clamp_stat_delta(10, -5, 100), 5);
+}
+
+TEST(CombatFormulas, ClampResource_NegativeWrapsToCap) {
+    // base+delta 大负 → 无符号环绕成大数 > cap → 取 cap（退化分支，记录真实行为）。
+    EXPECT_EQ(clamp_stat_delta(10, -30, 100), 100);
 }
 

@@ -13,6 +13,7 @@
 #include "core/data_model/game_data.hpp"
 
 #include <cstdint>
+#include <vector>
 
 namespace dlzr::logic {
 
@@ -23,6 +24,12 @@ namespace dlzr::logic {
 // Returns defense bonus percentage for given terrain type
 // ============================================================
 int32_t get_terrain_defense_bonus(int32_t terrain_type);
+
+// 运行时装载的地形防御加成表（16 项，每项 = 每地形防御加成% = GAME.DAT 块#1 记录 int2）。
+// 由 DatLoader::load_game_data 经 set_terrain_defense_bonus 装载，替代原先的手写魔法数组（RE 违规）。
+// 二进制实测钉死：terr[0]=(40,-20,10,0,0)→def=10；terr[9]=(20,0,15,20,10)→def=15；terr[11]→def=40。
+extern int32_t g_terrain_defense_bonus[16];
+void set_terrain_defense_bonus(const int32_t* src16);
 
 // ============================================================
 // HP 计算 / HP calculation
@@ -88,23 +95,34 @@ SkillEffect calc_skill_effect(const core::People& caster,
                               int32_t skill_level);
 
 // ============================================================
-// 经验值计算 / Experience calculation
+// 经验值计算 / Experience calculation  (RE: 0x0042AA92 / 0x0042AB23 / 0x00429E92)
 //
-// level_diff = killer_level - victim_level
-// multiplier: <-5: 2.0, <0: 1.5, <5: 1.0, <10: 0.75, else: 0.5
-// final_exp = base_exp × multiplier (整数运算)
+// 二进制无 base_exp 概念：经验纯由"等级差"分桶决定。两套函数同号
+// （diff = 防守方/受害者等级 − 攻击方/击杀者等级），但分桶与上限不同：
+//   · 攻击经验 calc_attack_exp(attacker, defender)：<-6→1,<-3→2,<-1→4,<0→6,==0→8,
+//     else diff*8+8；上限 32。调用方在"攻击敌方"时对结果 >>2（/4），此修正不在本函数内。
+//   · 击杀经验 calc_kill_exp(killer, victim)：<-6→1,<-3→2,<-1→4,<0→8,==0→12,
+//     else diff*16；上限 80。
+//   · 累加/升级 apply_experience_gain(person, gained)：total=exp_mod+gained;
+//     exp_mod=total%100; level=min(level+total/100,99)；返回是否升级。
+//   旧 calc_experience(killer,victim,base_exp) 用 base_exp*mult/4 是手写猜测，已删除。
 // ============================================================
-int32_t calc_experience(int32_t killer_level,
-                        int32_t victim_level,
-                        int32_t base_exp);
+int32_t calc_attack_exp(int32_t attacker_level, int32_t defender_level);
+int32_t calc_kill_exp(int32_t killer_level, int32_t victim_level);
+
+// 累加经验/升级（RE: 0x00429E92）。修改 person.experience(=exp_mod, 0..99) 与 person.level。
+// 返回 true 表示发生升级。注意：二进制把经验存为"当前级内经验"而非累计总值。
+bool apply_experience_gain(core::People& person, int32_t gained);
 
 // ============================================================
-// 伤害结算 / Damage resolution
+// 伤害结算 / Damage resolution (0x0042784B)
 //
-// damage = attack_power - defense
-// min damage = 1
+// RE: FUN_0042784b.c:10 — 二进制精确语义：
+//   损伤 = max(既存伤害, 攻击−防御)，且仅当 攻击 > 防御 时生效；
+//   攻击 <= 防御 时返回 incoming（基础伤害 incoming=0 → 0，非 1）。
+//   全 uint 语义：防御>=攻击时绝不把 incoming 改造成负数环绕的大数。
 // ============================================================
-int32_t calc_damage(int32_t attack_power, int32_t defense);
+int32_t calc_damage(int32_t attack_power, int32_t defense, int32_t incoming_damage = 0);
 
 // ============================================================
 // 装备攻防加成查询 / Equipped item attack/defense bonus lookup
@@ -118,5 +136,38 @@ int32_t calc_damage(int32_t attack_power, int32_t defense);
 // ============================================================
 int32_t get_item_attack_bonus(const core::People& person, const core::GameData& gd);
 int32_t get_item_defense_bonus(const core::People& person, const core::GameData& gd);
+
+// ============================================================
+// 命中判定 / Hit chance (RE: 0x0042ABB0 / 0x0042AC0B)
+//
+// 命中机制是伤害结算前的独立"攻击是否命中"闸门（FUN_004138ea 在伤害应用之前调用）：
+//   · 基础版 0x0042ABB0：命中率 = clamp((攻方智力 − 守方智力)×2 + 30, 0, ∞)；
+//                          rand_impl()%100 < 命中率 → 命中(1)，否则 0。
+//   · 武器/技能版 0x0042AC0B：命中率额外 += 技能等级（攻方.skill_lueduo 经阈值分桶）。
+//   rand_impl 为二进制全工程共用的 Borland LCG（种子 g_game_state.g_pow2_1_448790），
+//   clean 层直接复用，保证两条随机流完全一致（跨层差分用种子复位验证）。
+//   skill_level 由调用方以 get_skill_level(attacker.skill_lueduo) 预分桶传入（与 0x0042AC0B 一致）。
+// ============================================================
+int32_t calc_hit_chance(const core::People& attacker, const core::People& defender);
+int32_t calc_hit_chance_weapon(const core::People& attacker, const core::People& defender,
+                               int32_t skill_level);
+
+// ============================================================
+// 资源增减夹取 / Clamp resource delta (RE: 0x00427830)
+//
+// 二进制 FUN_00427830.c:10：if ((uint)(base+delta) <= cap) result = base+delta; else cap。
+// 即「仅封顶」的 max(cap, base+delta) 取小，无下界夹取（下界靠调用方约束 delta>=0）。
+// 用于 HP 修复（封顶 max_hp）、士气/装备完整度（封顶 100）等资源增量。
+// ============================================================
+int32_t clamp_stat_delta(int32_t base, int32_t delta, int32_t cap);
+
+// 等级奖励：遍历已部署(active_flag!=0)且未装备(enemy==0)的单位，求 level 平均，
+// bonus = avg - (fight_index*2+1)；<2→0；按 flow_phase 缩放(0→0,1→/2,else*4/5)。
+// 仅当 fight_index<0x24 时计算，否则直接 0。RE: 0x0042A199。
+// clean↔oracle 跨层差分见 CrossLayerDiff::LevelBonus（oracle=replica::calc_level_bonus_a199）。
+int32_t calc_level_bonus(const std::vector<core::People>& people,
+                         const std::vector<core::Fighter>& fighters,
+                         int32_t fight_index,
+                         int32_t flow_phase);
 
 }  // namespace dlzr::logic

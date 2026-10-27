@@ -6,10 +6,8 @@ add_library(dlzr_presentation STATIC
     image/image_cache.cpp
     audio/audio_manager.cpp
     animation/animation_player.cpp
-    animation/flc_player.cpp
     battle/battle_renderer.cpp
     battle/battle_input_handler.cpp
-    battle/battle_intro_renderer.cpp
     battle/battle_result_renderer.cpp
     battle/battle_animation_overlay.cpp
     battle/battle_animation_controller.cpp

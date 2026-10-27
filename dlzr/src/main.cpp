@@ -31,7 +31,6 @@
 #include "presentation/dialogue/dialogue_input.hpp"
 #include "presentation/battle/battle_renderer.hpp"
 #include "presentation/battle/battle_input_handler.hpp"
-// #include "presentation/battle/battle_intro_renderer.hpp"
 // ↑ 自创的"战斗简报屏"已删除。RE 证据（2026-10-23 复核）：
 //   原版确定链路 FUN_0042e2d6(确定)→FUN_0042e0f1(幻灯片)→FUN_0041b8e9(进战斗)
 //   →FUN_004294be(部署)→PTR_FUN_004465d0[0]=FUN_0040be07(网格/实体放置)
@@ -56,6 +55,8 @@
 #include "presentation/ending/ending_renderer.hpp"
 #include "presentation/opening/opening_renderer.hpp"
 #include "logic/dialogue/dialogue_manager.hpp"
+#include "logic/dialogue/dialogue_text_util.hpp"
+#include "logic/dialogue/dialogue_playback.hpp"
 #include "logic/forging/forging_system.hpp"
 #include "logic/level/level_event_manager.hpp"
 #include "logic/promotion/promotion_system.hpp"
@@ -98,20 +99,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-struct DialogueState {
-    std::vector<std::string> entries;       // Raw entries (with speaker codes)
-    std::vector<dlzr::core::Dialogue> parsed;  // Parsed dialogues
-    int32_t current_index{0};
-    int32_t visible_chars{0};
-    bool active{false};
-    // 对话弹出时刻（毫秒）。用于屏蔽"刚弹出就被上一次点击立即推掉"。
-    // 起因：19 屏开场幻灯片靠连点跳过，幻灯片结束的同帧/次帧弹出战前对话，
-    //   残留的一次 MouseDown 会被当作 ADVANCE/DISMISS，单次点击即整段推完且立即关闭，
-    //   观感等同于"进入关卡对话没有触发"。仅屏蔽极短窗口，稳态操作不受影响。
-    uint32_t started_ms{0};
-    dlzr::logic::GameMode return_mode{dlzr::logic::GameMode::STRATEGIC_MAP};
-};
-
 struct ChoiceState {
     bool active{false};
     std::string prompt;
@@ -121,80 +108,13 @@ struct ChoiceState {
     dlzr::logic::GameMode return_mode{dlzr::logic::GameMode::STRATEGIC_MAP};
 };
 
-void start_dialogue(DialogueState& ds,
-                    std::vector<std::string> raw_entries,
-                    dlzr::logic::GameMode return_mode) {
-    ds.entries = raw_entries;
-    ds.parsed.clear();
-    for (const auto& raw : raw_entries) {
-        ds.parsed.push_back(dlzr::logic::DialogueManager::parse_dialogue(raw));
-    }
-    ds.current_index = 0;
-    ds.visible_chars = 0;
-    ds.active = true;
-    ds.return_mode = return_mode;
-}
-
-// Forward declaration (defined later in this anonymous namespace)
-std::string format_dialogue_text(const std::string& raw,
-                                  const std::string& protagonist_name);
-
-void advance_dialogue(DialogueState& ds, const std::string& protagonist_name) {
-    if (!ds.active || ds.parsed.empty()) return;
-
-    const auto& text = ds.parsed[ds.current_index].text;
-    // Count visible chars exactly as the renderer shows them:
-    //  - AA/BB/CC/DD marker pairs are stripped (0 visible chars)
-    //  - GG -> protagonist name, TT -> stripped
-    std::string display = format_dialogue_text(text, protagonist_name);
-    int32_t total_chars = 0;
-    size_t pos = 0;
-    while (pos < display.size()) {
-        uint8_t b = static_cast<uint8_t>(display[pos]);
-        pos += (b < 0x80) ? 1 : 2;
-        total_chars++;
-    }
-
-    if (ds.visible_chars < total_chars) {
-        // 整页显示（原版 FUN_0043d82f 一次渲染整段，无逐字）：首次推进即全显。
-        ds.visible_chars = total_chars;
-    } else {
-        ds.current_index++;
-        ds.visible_chars = 0;
-        if (ds.current_index >= static_cast<int32_t>(ds.parsed.size())) {
-            ds.active = false;
-        }
-    }
-}
-
-std::string get_speaker_name(int32_t speaker_id, const dlzr::core::GameData& gd) {
-    if (speaker_id < 0 || speaker_id >= dlzr::core::MAX_PEOPLE) return "";
-    const auto& name = gd.people[speaker_id].name;
-    return std::string(name.data(), strnlen(name.data(), name.size()));
-}
-
-// Substitute the dialogue tokens that the original renderer does NOT colour:
-//   GG = protagonist reference (大队长 / player hero) -> use the player's name
-//   TT = battle/place token -> stripped by the original (no colour marker)
-// AA/BB/CC/DD markers are left intact for the renderer to colour per token.
-std::string format_dialogue_text(const std::string& raw,
-                                  const std::string& protagonist_name) {
-    std::string out = raw;
-    if (!protagonist_name.empty()) {
-        size_t pos = 0;
-        while ((pos = out.find("GG", pos)) != std::string::npos) {
-            out.replace(pos, 2, protagonist_name);
-            pos += protagonist_name.size();
-        }
-    }
-    size_t tpos = 0;
-    while ((tpos = out.find("TT", tpos)) != std::string::npos) {
-        out.replace(tpos, 2, "");
-    }
-    return out;
-}
-
 }  // namespace
+
+// 对话播放状态机已抽取至 logic/dialogue/dialogue_playback.{hpp,cpp}，此处复用。
+using dlzr::logic::DialogueState;
+using dlzr::logic::start_dialogue;
+using dlzr::logic::advance_dialogue;
+using dlzr::logic::build_dialogue_display;
 
 // === 卡死诊断心跳（dlzr_heartbeat.log）===
 // 卡死是无栈可取的挂起（多为堆损坏自旋 / SDL present 阻塞）。
@@ -593,7 +513,7 @@ int main(int argc, char* argv[]) {
                 }
                 auto da = dialogue_input.process_event(event);
                 if (da == dlzr::presentation::DialogueAction::ADVANCE) {
-                    advance_dialogue(dialogue_state, gsm.game_data().protagonist_name);
+                    advance_dialogue(dialogue_state, gsm.game_data());
                     if (!dialogue_state.active) {
                         gsm.set_mode(dialogue_state.return_mode);
                         if (pending_opening_dialogue &&
@@ -1220,9 +1140,13 @@ int main(int argc, char* argv[]) {
                         int32_t ending_id = gsm.select_ending();
                         std::string ending_text;
                         if (ending_id >= 0 && ending_id < dialogue_mgr.dialogue_count()) {
-                            auto parsed = dlzr::logic::DialogueManager::parse_dialogue(
+                            // 逐行解析后拼接（结局为单条目，可能多行；匹配二进制逐行模型）。
+                            auto ending_lines = dlzr::logic::DialogueManager::parse_dialogue_entry(
                                 dialogue_mgr.get_dialogue_text(ending_id));
-                            ending_text = parsed.text;
+                            for (const auto& dl : ending_lines) {
+                                if (!ending_text.empty()) ending_text += "\n";
+                                ending_text += dl.text;
+                            }
                         }
                         ending_renderer.start(ending_id, ending_text);
                         gsm.set_mode(dlzr::logic::GameMode::ENDING);
@@ -1423,8 +1347,11 @@ int main(int argc, char* argv[]) {
                 } else if (ev.type == dlzr::logic::BattleEvent::SKILL_USED) {
                     int32_t sk = ev.value;
                     if (sk >= 0 && sk < dlzr::core::MAX_SKILLS) {
-                        flm_idx = gsm.game_data().skills[sk].flm_index;
-                        int32_t snd = gsm.game_data().skills[sk].audio_index;
+                        // ⚠️ flm_index/audio_index 在原版 GAME.DAT 技能记录中不存在
+                        // （RE 实证：48B 记录 = [8B 头][16B 名][para1..anm_index 共 6 int32]，无动画/音效字段）。
+                        // Tier-B 默认 -1（无专属动画/音效），由 battle_anim_controller 按 skill_type 播放通用演出。
+                        flm_idx = -1;
+                        int32_t snd = -1;
                         if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                     }
                     if (ev.source_idx >= 0 && tx >= 0 && ty >= 0) {
@@ -1436,8 +1363,9 @@ int main(int argc, char* argv[]) {
                 } else if (ev.type == dlzr::logic::BattleEvent::MINE_TRIGGERED) {
                     int32_t mi = ev.value;
                     if (mi > 0 && mi < dlzr::core::MAX_DILEI) {
-                        flm_idx = gsm.game_data().mines[mi].flm_index;
-                        int32_t snd = gsm.game_data().mines[mi].audio_index;
+                        // ⚠️ 同技能：flm_index/audio_index 不在地雷 48B 记录中（Tier-B 默认 -1）。
+                        flm_idx = -1;
+                        int32_t snd = -1;
                         if (snd >= 0 && snd < 1024) audio.play_sound(snd);
                         if (tx >= 0 && ty >= 0) {
                             battle_anim_controller.queue_impact(tx, ty);
@@ -1487,8 +1415,8 @@ int main(int argc, char* argv[]) {
         if (dialogue_state.active) {
             // 原版 FUN_0043d82f.c 一次性渲染整段文本（FUN_004061df 整段 buffer），
             // 无逐字打字机。这里直接整页显示：每帧把 visible_chars 设为全量。
-            const auto& text = dialogue_state.parsed[dialogue_state.current_index].text;
-            std::string display = format_dialogue_text(text, gsm.game_data().protagonist_name);
+            const auto& d = dialogue_state.parsed[dialogue_state.current_index];
+            std::string display = build_dialogue_display(d, gsm.game_data());
             int32_t total_chars = 0;
             size_t pos = 0;
             while (pos < display.size()) {
@@ -1843,17 +1771,11 @@ int main(int argc, char* argv[]) {
         // Overlay: dialogue box
         if (dialogue_state.active && !dialogue_state.parsed.empty()) {
             const auto& d = dialogue_state.parsed[dialogue_state.current_index];
-            // Substitute GG(protagonist)/TT tokens; AA/BB/CC/DD are kept for colouring
-            std::string display = format_dialogue_text(
-                d.text, gsm.game_data().protagonist_name);
-            std::string speaker_name;
+            // 原版 FUN_0043cc96:44-49 把说话人名（raw，默认色）写入文本缓冲，
+            // FUN_0043d82f 内联绘制；故此处把说话人名前置进 display（默认色），
+            // 与二进制一致。DAT_00448780 后缀在 clean 层以全角冒号替代（Tier-B）。
+            std::string display = build_dialogue_display(d, gsm.game_data());
             int32_t face_idx = -1;
-            if (d.speaker_id == 0) {
-                // 主角（大队长）：使用玩家命名
-                speaker_name = gsm.game_data().protagonist_name;
-            } else if (d.speaker_id > 0 && d.speaker_id < dlzr::core::MAX_PEOPLE) {
-                speaker_name = get_speaker_name(d.speaker_id, gsm.game_data());
-            }
             // 头像按说话人码直接索引 FACE 缓冲（原版 FUN_0043d82f.c:41：
             //   FUN_00422f68(0x82,0x134,0x50,100, &DAT_004761f8 + param_1*8000)，
             //   param_1 即说话人码；FACE.DAT 共 170 张，码 0-99 均合法）。
@@ -1866,7 +1788,7 @@ int main(int argc, char* argv[]) {
             if (face_idx >= 0) {
                 face_rgba = face_loader.get_face_rgba(face_idx);
             }
-            dialogue_renderer.render(speaker_name, display,
+            dialogue_renderer.render(display,
                                      dialogue_state.visible_chars, face_rgba);
         }
 

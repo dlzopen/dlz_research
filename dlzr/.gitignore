@@ -45,3 +45,17 @@ compile_commands.json
 *.js
 *.data
 *.html
+
+# ============================================================
+# 额外构建/IDE 产物（位于 dlzr/ 根目录，由 CMake / Visual Studio 生成）
+# ============================================================
+bin/
+lib/
+x64/
+*.dir/
+*.vcxproj*
+*.sln
+CTestTestfile.cmake
+cmake_install.cmake
+*.user
+*.log

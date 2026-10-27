@@ -10,13 +10,33 @@
 
 namespace dlzr::presentation {
 
+// 逐字配色令牌 → 调色板索引（RE 证据 FUN_004061df.c:39-52，逐指令实证）。
+//   原版仅处理 A/B/C/D 四类；其余 ASCII（含 G/T 与其它字符）一律 0x48 正文色。
+//   GG/TT 属解析层语义，在抵达渲染层前已被 dialogue_text_util::format_dialogue_text 处理：
+//   GG→展开为 "AA"+主角名（渲染层按 FUN_004061df.c:39-42 着红 0xb7）、TT→剥离；
+//   故渲染层只会见到 AA/BB/CC/DD 配色标记与裸文本，映射规则同上。
+//   RGB 取 core::kOriginalPalette[idx*4..]（调色板已 RE，未在此重复）。
+uint8_t dialogue_token_palette_index(char c);
+
+// 逐字配色分段（RE 实证 FUN_004061df.c:39-52,100）：
+//   扫描对话串，AA/BB/CC/DD 标记对→调色板索引→RGB；其余字符→0x48 正文色。
+//   返回按绘制顺序排列的彩色分段；每个分段内的字共用同一 RGB。
+//   令牌字符本身不绘制、仅着色紧随其后的 1 个字模（与二进制一致）。
+//   说话人名由调用方（main.cpp build_dialogue_display）前置进 text（默认色内联绘制，
+//   原版 FUN_0043cc96:44-49 写名 + FUN_0043d82f 绘制），本函数只负责整串配色。
+struct DialogueColoredSegment {
+    std::string text;   // 该分段原始字节（可能含多字节 GBK）
+    uint8_t r{0}, g{0}, b{0};
+};
+std::vector<DialogueColoredSegment> dialogue_build_segments(const std::string& text);
+
 class DialogueRenderer {
 public:
     void init(platform::Platform& platform, FontRenderer& font,
               ImageCache& images, const std::string& game_data_dir);
 
-    void render(const std::string& speaker_name,
-                const std::string& text,
+    // text 已含说话人名（由调用方前置，默认色内联）+ 正文。visible_chars 控制整页显示进度。
+    void render(const std::string& text,
                 int32_t visible_chars,
                 const uint8_t* face_rgba = nullptr);
 

@@ -66,16 +66,25 @@ struct Fighter {
     int32_t unknown_14;        // +0x14
     int32_t unknown_18;        // +0x18
     int32_t unknown_1c;        // +0x1c
-    int32_t equip_data1;       // +0x20 装备数据1 / col for calc_equip_defense
-    int32_t equip_data2;       // +0x24 装备数据2 / row for calc_equip_defense
+        int32_t pos_x;             // +0x20 实时网格坐标X / runtime grid pos X (RE: FUN_0040124c)
+        int32_t pos_y;             // +0x24 实时网格坐标Y / runtime grid pos Y (RE: FUN_0040144e)
     int32_t unknown_28;        // +0x28
     int32_t unknown_2c;        // +0x2c
     int32_t unknown_30;        // +0x30
     int32_t unknown_34;        // +0x34
     int32_t attacker_index;    // +0x38 攻击者索引 / Attacker index
-    int16_t status_flag;       // +0x3c 状态标志 / Status flag
-    uint8_t _pad_3e;           // +0x3e
-    uint8_t action_type;       // +0x3f 行动类型 / Action type
+    // +0x3c..+0x3f 四个 RE 实证字节（按字节语义命名）；同时为 C++ 侧提供整字视图：
+    //   status_flag16 = 原 int16 视图（+0x3c..+0x3d），status_flags = 32 位整字视图。
+    union {
+        struct {
+            uint8_t active_flag;   // +0x3c 部署/激活标志(byte) / deployed-active (g_battle_unit_active)
+            uint8_t ai_action;     // +0x3d AI动作码(byte) / AI action code (g_battle_unit_action)
+            uint8_t flag2;         // +0x3e 副标志(byte) / secondary flag (g_battle_unit_flag2)
+            uint8_t unit_state;    // +0x3f 行动状态(byte) / unit state (g_battle_unit_state)
+        };
+        uint16_t status_flag16;    // +0x3c..+0x3d 原 int16 状态标志视图（battle_renderer 用）
+        uint32_t status_flags;     // +0x3c..+0x3f 32 位整字视图
+    };
 };
 static_assert(sizeof(Fighter) == 0x40, "Fighter must be 0x40 bytes");
 
@@ -154,15 +163,15 @@ static_assert(sizeof(WuPin) == 72, "WuPin must be 72 bytes");
 // Size: 48 bytes, 10 records in GAME.DAT
 // ============================================================
 struct DiLei {
-    std::array<char, 16> name;        // +0x00 地雷名称 (GBK) / Mine name
-    int32_t pad0;                     // +0x10 填充 / Padding (always 0)
-    int32_t price;                    // +0x14 价格 / Price
-    int32_t damage;                   // +0x18 威力 / Damage
-    int32_t effect_type;              // +0x1C 1=士气 0=体力 / 1=morale 0=HP
-    int32_t apply_range;              // +0x20 影响范围 / Application range
-    int32_t pad3;                     // +0x24 填充 / Padding
-    int32_t flm_index;                // +0x28 动画索引 / Animation index
-    int32_t audio_index;              // +0x2C 音效索引 / Sound index
+    // ⚠️ RE 实证（DLZFULL/GAME.DAT @0x7404，48B 记录步长）：与 JiNeng 同理，名称位于 +0x08，
+    // 前 8 字节为文件头。旧结构体漏头导致 name 错位；flm_index/audio_index 在原版记录中不存在，已移除。
+    std::array<int32_t, 2> header;    // +0x00 文件头 (8B) / File header
+    std::array<char, 16> name;        // +0x08 地雷名称 (GBK) / Mine name
+    int32_t price;                    // +0x18 价格 / Price
+    int32_t damage;                   // +0x1C 威力 / Damage
+    int32_t effect_type;              // +0x20 1=士气 0=体力 / 1=morale 0=HP
+    int32_t apply_range;              // +0x24 影响范围 / Application range
+    std::array<int32_t, 2> reserved;  // +0x28 保留 (凑满 48B 记录) / Padding
 };
 static_assert(sizeof(DiLei) == 48, "DiLei must be 48 bytes");
 
@@ -171,15 +180,19 @@ static_assert(sizeof(DiLei) == 48, "DiLei must be 48 bytes");
 // Size: 40 bytes, 16 records in GAME.DAT
 // ============================================================
 struct JiNeng {
-    std::array<char, 16> name;        // +0x00 技能名称 (GBK) / Skill name
-    int32_t para1;                    // +0x10 效果参数1 / Effect parameter 1
-    int32_t para2;                    // +0x14 效果参数2 / Effect parameter 2
-    int32_t type;                     // +0x18 技能类型 / Skill type (FormulaType)
-    int32_t select_range;             // +0x1C 选择范围 / Selection range
-    int32_t apply_range;              // +0x20 应用范围 / Application range
-    int32_t anm_index;                // +0x24 大动画 -> anm.dat (-1=无) / Large animation
-    int32_t flm_index;                // +0x28 小动画 -> flm.dat / Small animation
-    int32_t audio_index;              // +0x2C 音效 -> wave.dat / Sound effect
+    // ⚠️ RE 实证（DLZFULL/GAME.DAT @0x75E4，48B 记录步长）：每条记录前 8 字节为文件头，
+    // 名称位于 +0x08（非 +0x00）。旧结构体漏掉 8 字节头，导致 name 与 para1.. 整体错位 8 字节，
+    // calc_skill_effect 读到的 para1/para2 实为名称尾字节（垃圾），技能 HP/士气效果计算错误。
+    // flm_index/audio_index 在原版 48B 记录中**不存在**（仅 para1..anm_index 共 6 个 int32），
+    // 故已从结构体移除；其动画/音效用途在 main.cpp 改为 Tier-B 默认 -1（见 main.cpp）。
+    std::array<int32_t, 2> header;    // +0x00 文件头 (8B, 语义未 RE) / File header (2×int32)
+    std::array<char, 16> name;        // +0x08 技能名称 (GBK) / Skill name
+    int32_t para1;                    // +0x18 效果参数1 / Effect parameter 1
+    int32_t para2;                    // +0x1C 效果参数2 / Effect parameter 2
+    int32_t type;                     // +0x20 技能类型 / Skill type (FormulaType)
+    int32_t select_range;             // +0x24 选择范围 / Selection range
+    int32_t apply_range;              // +0x28 应用范围 / Application range
+    int32_t anm_index;                // +0x2C 大动画 -> anm.dat (-1=无) / Large animation
 };
 static_assert(sizeof(JiNeng) == 48, "JiNeng must be 48 bytes");
 
@@ -390,6 +403,28 @@ struct FightPeople {
     std::array<uint8_t, 8> mines; // +0x7C 地雷栏 (8格,0=空)
 };
 static_assert(sizeof(FightPeople) == 0x84, "FightPeople must be 132 bytes");
+
+// ============================================================
+// 战役招募名册 / Campaign recruitment roster
+// Tier-B 接缝（招募"事件"由事件 FSM 写入，本结构仅被消费）：
+// 战斗部署按**同一槽位索引**读 fight.people[slot] / fight.fighters[slot]
+// （证据 FUN_0041b53c.c:19-29：遍历部署位 slot，读 people[slot].class_type/face
+//  → 滑稽绘制；face > -1 视为有效单元）。故"招募一名同伴"= 把 game.people[k]
+// （k∈[1,39] 战役同伴槽）复制到 fight.people[k] 并标 fight.fighters[k].grid_x/y(登场)，
+// 原版同样用 slot k 既作战役名册也作战斗部署位（FightData 注释已钉定 [0..39]=战役槽）。
+// 事件系统（FUN_0043c2dd 等）负责决定"哪些 k 被招募"——本结构是其写回目标，
+// 克隆不臆造招募事件逻辑（铁律零：不伪造游戏流程）。
+// ============================================================
+struct RecruitedCompanion {
+    int32_t people_index{0};  // 源名册索引（指向 game.people[k]，k∈[1,39]）
+    int32_t grid_x{999};      // 部署网格 X（999=未部署，与 FIGHT.DAT 约定一致）
+    int32_t grid_y{999};      // 部署网格 Y
+    int32_t facing{1};        // 朝向 0=N 1=S 2=W 3=E（FUN_0042e2d6 派生自方向选择）
+};
+
+struct CampaignRoster {
+    std::vector<RecruitedCompanion> companions;  // 已招募并参与本关的同伴
+};
 
 // ============================================================
 // TOWN.DAT 磁盘结构体 / TOWN.DAT on-disk struct

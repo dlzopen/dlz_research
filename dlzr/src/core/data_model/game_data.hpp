@@ -34,6 +34,19 @@ struct GameData {
     // wupin_compat[item_idx][class_type] != 0 表示该兵种可使用此物品
     std::array<std::array<uint8_t, MAX_CLASS_TYPES>, MAX_WUPIN> wupin_compat{};
 
+    // 兵种地形移动消耗矩阵 / Class × terrain movement cost (BingZhongYiDong)
+    // RE: GAME.DAT +0x3F20, 96 兵种 × 16 地形 × uint8 = 1536 字节（二进制实测）。
+    // 值 = 该兵种通过该地形的移动消耗；99 = 不可通行。
+    // 证据：0x3F20 处 class[0] = [1×14, 99, 99]、class[1] 地形 3/4 = 2（Python 抽取 DLZFULL/GAME.DAT）。
+    std::array<std::array<uint8_t, 16>, MAX_CLASS_TYPES> class_move_cost{};
+
+    // 地形修正表 / Terrain modifiers (DiXingModifier)
+    // RE: GAME.DAT +0x00A0, FUN_00424566.c:15 装载 16×0x14=320B；
+    // FUN_0042a98e.c:21 / FUN_004138ea.c:262/310 按 20B(=5×int32) 记录索引：
+    //   int0=mod_a(case3/4/5) int1=mod_b(case6) int2=防御加成%(case def) int3/int4 保留。
+    // ⚠️ 旧实现读 40B/地形是读穿进相邻块的 bug；以 20B/记录（5 int）为准，二进制字节实测钉死。
+    std::array<std::array<int32_t, 5>, 16> terrain_modifiers{};
+
     // FIGHT.DAT: 每关数据按需加载，不全部驻留内存
     // Fight data loaded on demand per battle, not all resident
 
@@ -135,6 +148,10 @@ struct GameData {
     // 玩家在角色选择界面修改的主角名（对应对话令牌 GG 的替换值）
     // Player-edited protagonist name (replacement for dialogue token GG)
     std::string protagonist_name{"\xD6\xF7\xBD\xC7"};  // 默认"主角" (GBK)
+    // 对话令牌 TT 的替换值（战斗/地名，对应原版 DAT_007d01c8；运行时由场景装载，
+    // 非 PE 静态全局）。原版 FUN_0043cc96.c:71-82 把它逐字包 "AA" 着红(0xb7)。
+    // 确切运行时值（平阳战役名等）需游戏流程 RE 落定；默认空→TT 退化为剔除。
+    std::string battle_name{};
     // 主角头像索引 / Protagonist portrait index (FACE.DAT, hero slot 103+idx)
     int32_t protagonist_face{-1};
     // 主角兵种索引 / Protagonist class type, derived from formation selection {1,4,8,11}
@@ -146,6 +163,10 @@ struct GameData {
     int32_t protagonist_intelligence{80};
     // 主角等级 / Protagonist level（战役起始等级；完整升级系统待实现，先用此占位）。
     int32_t protagonist_level{10};
+
+    // 战役招募名册（事件 FSM 写回；BattleEngine::init 消费为同伴部署）。
+    // 见 types.hpp RecruitedCompanion / CampaignRoster 注释。
+    core::CampaignRoster campaign_roster{};
 };
 
 // ============================================================

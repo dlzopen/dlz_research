@@ -48,6 +48,11 @@ public:
     bool is_in_attack_range(int32_t attacker_idx, int32_t target_x, int32_t target_y) const;
     int32_t get_attack_range(int32_t fighter_idx) const;
     int32_t get_movement_range(int32_t fighter_idx) const;
+    // 前进/追击落点选择（对齐二进制 find_nearest_free_cell：加权可达集内曼哈顿最小、严格优于起点）
+    int32_t select_destination_cell(int32_t fighter_idx, int32_t to_x, int32_t to_y);
+    // 撤退/防御性重定位落点选择（对齐二进制 find_best_cell_terrain FUN_0040144e：
+    // 加权可达集(排除起点)内 *最大化* 曼哈顿距离到敌人 + 地形{9,10,0xb}罚9；平局取行优先首次）
+    int32_t select_retreat_cell(int32_t fighter_idx);
 
     // 选中单位：记录选中索引并立即计算可达/攻击范围（与原版"选中即亮出可达区"一致）
     void set_selected_fighter(int32_t idx);
@@ -78,6 +83,10 @@ private:
 
     int32_t find_next_active_fighter(int32_t from_idx);
     bool is_fighter_alive(int32_t fighter_idx) const;
+    // 地质硬障碍（所有兵种均不可通行，class_move_cost[任意兵种][地形旗标] >= 99）。
+    // 证据: FUN_00418e29.c 移动范围洪水填充以 class_move_cost[entered_terrain>>12][兵种]
+    //       作步进代价，>=99 即不可进入；此处取"全兵种均 99"作为与兵种无关的硬墙判定。
+    bool is_hard_obstacle(int32_t cell) const;
     int32_t count_alive_on_team(int32_t team) const;
 
     void execute_move(const BattleCommand& cmd);
@@ -108,9 +117,14 @@ private:
     BattleCommand generate_enemy_command(int32_t fighter_idx);
     int32_t find_nearest_enemy(int32_t fighter_idx) const;
     int32_t find_best_attack_target(int32_t fighter_idx);
-    int32_t bfs_step_toward(int32_t from_x, int32_t from_y,
-                             int32_t to_x, int32_t to_y, int32_t max_dist);
+    int32_t bfs_step_toward(int32_t fighter_idx, int32_t to_x, int32_t to_y);
 
+    // 敌方 AI 派发（忠实复刻 FUN_00403f8e + FUN_00402ddc + DAT_00446030 表）。
+    // dispatch_ai_type 复刻 FUN_00402ddc 的单个 ai_type 分支：若触发条件满足则
+    // 返回对应动作（攻击/移动/技能/撤退/待命），否则返回 NONE（交由上一层回退到
+    // 表的下一列 ai_type）。ai_attack_in_place 复刻"原地攻击"(DAT_0044b230=0)。
+    BattleCommand dispatch_ai_type(int32_t fighter_idx, int ai_type);
+    BattleCommand ai_attack_in_place(int32_t fighter_idx);
     BattleCommand ai_try_skill(int32_t fighter_idx);
     BattleCommand ai_try_mine(int32_t fighter_idx);
     BattleCommand ai_patrol(int32_t fighter_idx);
@@ -120,10 +134,13 @@ private:
     BattleCommand ai_chase(int32_t fighter_idx);
     BattleCommand ai_retreat(int32_t fighter_idx);
     int32_t find_ally_to_heal(int32_t fighter_idx) const;
-    bool should_retreat(int32_t fighter_idx) const;
 
     const core::FightPeople& get_fight_people(int32_t fighter_idx) const;
     const core::ClassType& get_class_type(int32_t class_idx) const;
+
+    // 测试友元：允许 test_enemy_ai_dispatch 直接设定 state_ 的 hp/士气并调用私有派发，
+    // 以覆盖 hp<25% 等需手动致伤的门控路径（不引入生产代码副作用）。
+    friend class EnemyAiDispatchTest;
 };
 
 }  // namespace dlzr::logic

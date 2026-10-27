@@ -56,12 +56,11 @@ SettlementResult finalize_battle(const BattleState& state,
             if (victim.people_idx < 0) continue;
 
             const auto& victim_fp = fight.people[victim.people_idx];
-            int32_t base_exp = victim_fp.level * 10;
-            exp_gained += calc_experience(person.level, victim_fp.level, base_exp);
+            exp_gained += calc_kill_exp(person.level, victim_fp.level);
         }
 
         if (exp_gained > 0) {
-            person.experience += exp_gained;
+            apply_experience_gain(person, exp_gained);
             result.total_exp_gained += exp_gained;
         }
     }
