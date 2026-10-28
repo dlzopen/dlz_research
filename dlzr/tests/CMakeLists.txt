@@ -38,6 +38,7 @@ add_executable(dlzr_tests
     test_save_system.cpp
     test_game_flow.cpp
     test_forging_system.cpp
+    test_shop_system.cpp
     generated_stub_registry.cpp
     ${CMAKE_SOURCE_DIR}/src/heartbeat.cpp
 )
