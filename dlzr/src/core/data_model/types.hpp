@@ -163,11 +163,12 @@ static_assert(sizeof(WuPin) == 72, "WuPin must be 72 bytes");
 // Size: 48 bytes, 10 records in GAME.DAT
 // ============================================================
 struct DiLei {
-    // RE 实证（权威 010 模板 template/dlz_game.bt + DLZFULL/GAME.DAT @0x725C 逐字节抽取）：
-    // 每条 48B，名称位于记录 +0x00（无前导文件头）。010 模板在 name 与 price 间误插了一个
-    // pad0，真实文件无此字段；真实字段顺序 = name[16]/weili/price/effect_type/flm_index/
-    // pad×3/audio_index。旧结构体误加 8B header 且把 name 推到 +0x08，致字段整体错位，
-    // mines[].damage 读到 flm_index 等垃圾。已移除 phantom header，字段对齐 @0x725C 实证。
+    // RE 实证（权威 010 模板 template/dlz_game.bt 的 DiLei 结构 + DLZFULL/GAME.DAT @0x725C
+    // 逐字节抽取）：每条 48B，名称位于记录 +0x00（无前导文件头）。模板在 name 与 price 间
+    // 标了一个 pad0(@+0x10)，但真实文件该位实为 weili（模板命名瑕疵、字节位置一致）；
+    // C++ 正确以 weili@+0x10 起。旧结构体误加 8B header 且把 name 推到 +0x08，致字段整体
+    // 错位（price/effect_type 读到名称尾字节），已移除 phantom header 并对齐 @0x725C 实证。
+    // 字段顺序 = name[16]/weili/price/effect_type/flm_index/pad×3/audio_index。
     std::array<char, 16> name;        // +0x00 地雷名称 (GBK) / Mine name
     int32_t weili;                    // +0x10 威力 / Damage (土雷60…轰天雷800)
     int32_t price;                    // +0x14 价格 / Price (石雷240…轰天雷800)
@@ -205,15 +206,18 @@ static_assert(sizeof(JiNeng) == 48, "JiNeng must be 48 bytes");
 
 // ============================================================
 // 锻造材料结构体 / Material (crafting material) struct
-// Size: 32 bytes, 10 records in GAME.DAT at offset 0x7260
+// Size: 28 bytes, 10 records in GAME.DAT at offset 0x70E0
+// RE 实证（权威 010 模板 template/dlz_game.bt 的 Material 结构 +
+//   DLZFULL/GAME.DAT @0x70E0 逐字节 decode）：每条 28B =
+//   name[16]/unit[8]/price[4]，无多余填充。旧结构体误加成 32B（多 4B pad）
+//   且装载器偏移误置 0x7260，落入 DiLei 块读脏数据。已按模板修正。
 // ============================================================
 struct Material {
     std::array<char, 16> name;        // +0x00 材料名称 (GBK) / Material name
     std::array<char, 8> unit;         // +0x10 计量单位 / Unit of measure
     int32_t price;                    // +0x18 价格 / Price per unit
-    int32_t pad;                      // +0x1C 填充 / Padding
 };
-static_assert(sizeof(Material) == 32, "Material must be 32 bytes");
+static_assert(sizeof(Material) == 28, "Material must be 28 bytes");
 
 // ============================================================
 // 地雷配方表 / DiLei recipe matrix

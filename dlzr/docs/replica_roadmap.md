@@ -6,7 +6,7 @@
 
 ---
 
-## 0. 当前基线（证据快照 · 2026-10-26 刷新）
+## 0. 当前基线（证据快照 · 2026-10-28 刷新）
 
 | 维度 | 状态 | 证据 |
 |---|---|---|
@@ -15,7 +15,7 @@
 | 命名诚实度 | `g_const_`=**0**、`gs_00` 残留=**0**；但真·游戏语义名 ≈498/1914，其余为内容分类/区域占位/子结构偏移占位 | `renames.csv` 分类拆分 |
 | 结构化区域 | **Fighter / People / ClassType / Skill** 四块字段偏移与二进制 1:1（GameState 成员） | `types.hpp`/`game_data.hpp`/`battle_state.hpp` + Ghidra 对拍 |
 | 战斗数值内核（pilot） | **14 个战斗数值函数已语义化转发** + 独立 `ref_*` 逐指令转录 + 随机对拍 **100,000 次 0 分歧**；另建 **clean↔oracle 跨层差分**（9 例 + `SkillGridDiff` 3 例，含 1–2 万次随机对拍 0 分歧） | `replica/battle_calc.cpp`、`tests/test_battle_calc.cpp`、`tests/test_cross_layer_diff.cpp`、`tests/test_skill_grid_diff.cpp` |
-| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 238/238 PASS**（含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock） | `cmake --build` 已验证（2026-10-26 续，全绿） |
+| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 355 总 / 354 PASS / 1 已知失败**（`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` —— AI 技能旗标门控未实现，Tier-B 近似缺口，见 §6#10 + §8）。含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock | `cmake --build` 已验证（2026-10-28） |
 | 架构分层 | **转录/oracle 层**（`src/replica/`）+ **clean 复刻层**（`src/core` `src/logic` `src/presentation` `src/platform`） | `find dlzr/src -maxdepth 2 -type d` |
 | clean 层已有结构 | `logic/`：battle, combat, dialogue, save, level(LevelEventManager), promotion, character, crafting, forging, hidden_level, strategic；`presentation/`：battle, dialogue, title, opening, ending, ui, font, animation, audio 等 | 同名 `.hpp` 存在 |
 
@@ -31,6 +31,7 @@
    - **Tier B 实现自由（玩家无感）**：内部调度、数据结构、内存布局、模块划分——只要可观测行为等价。
 3. **增量验收、互不阻塞**：以"函数"和"子系统"为最小验收单元；一个单元通过闸门即可计入完成度，不必等全局完工。
 4. **oracle 优先**：先用 `replica/` 转录层把可观测行为钉死（作为差分测试 oracle），clean 层实现必须与之 0 分歧，再谈重构美化。
+5. **010 Editor 模板权威纪律（2026-10-28 立 · 不可违背）**：**所有从二进制数据文件（GAME.DAT / PEOPLE.DAT / FIGHT.DAT / TOWN.DAT / MAP.DAT / BLK / TXT.DAT / WAVE / SAVE 等）读取的数据，其布局、字段偏移、步长、字节序，一律以 `template/*.bt`（010 Editor 模板）为唯一权威 schema**；任何手写常量（偏移/尺寸/步长）若与 `.bt` 冲突，**以 `.bt` 为准、改自己的代码，不得改模板**。落地要求：① 每个 loader 在注释里 `@ref template/<x>.bt` 指明所依据的模板结构与实测块基址；② 新增/修改 loader 偏移前，先 `grep` 模板确认；③ 出现"模板算出来和实测不符"时，**先怀疑自己的换算/读数，再质疑模板**——`dlz_game.bt` 经用户实证为正确（见 §8），凡曾误判模板偏移的笔记一律作废。详见 §8「装载器合规审计表」。
 
 ---
 
@@ -86,6 +87,12 @@
 - **诚实残留已收口（2026-10-25 续）**：ARMY.DAT 精灵 + `bigmap.img` 地图背景图的 loader 差分断言已加（`tests/test_first_level.cpp` → `AssetLoaderDiffTest.ArmyDatStructureMatchesBinary` / `BigmapImgMatchesBinary`）。证据：`DLZFULL/ARMY.DAT` 大小 = 3983616 = 91×0xAB00（字节级吻合）；`BIGMAP.IMG` header `width_m1@+0x06`/`height_m1@+0x08`、像素索引@+0x10、调色板@+0x10+W×H（6-bit×4）与 loader 解出逐字节一致。属渲染资源，非数值字段，闭环后 Phase 4 全收口。
 - **真实 IO 测试框架（2026-10-25 续十八，用户核心诉求）**：`tests/test_dat_io.cpp` 14 用例，用真实 `DLZFULL` 二进制逐字节交叉校验 `DatLoader` 输出（独立重解析 + RE 定点）——`RealFileSizes`/`PeopleLoadedByteIdentical`/`People0IsSunWukong`/`TerrainTableMatchesRawParse`/`TerrainStrideIs20Not40`/`ClassMoveCostMatchesRaw`/`WupinCompatIsLastBlock`/`DialoguesDecode593`/`DialogueDecodeIndependentCount`/`Map0Dimensions`/`Fight0Loads`/`BlkGroup11Loads`/`WaveClipLoads`/`MissingFileThrows` 全 PASS。实证定点：GAME=56588/PEOPLE=5280/TXT=110900/MAP=120690/FIGHT=963876/BLK=15805952/WAVE=12992170；PEOPLE[0]=孙悟空(GBK CB EF CE F2 BF D5)；地形@0xA0 20B/记录；class_move_cost[0]=[1×14,99,99]；TXT 593 条；map0 20×26/blk11；fight0"村庄风云"。
 
+- **★ GAME.DAT 字段对齐收官（2026-10-26 → 2026-10-28 · 铁律零实证 + `template/dlz_game.bt` 权威校验）**：
+  - **JiNeng（技能表）/ DiLei（地雷表）字节对齐已校正**（提交 `927d893`，2026-10-26）：JiNeng@`0x743C`、DiLei@`0x725C`（48B/记录），与 `dlz_game.bt` 实测块基址一致；DiLei 模板 `pad0@+0x10` 实为 `weili`（命名习惯差异，非结构错误）。
+  - **ai_type → skill_id 映射已收口**（提交 `927d893`）：31→15(空袭)/41·42→13(暗杀)/51·52→14(施毒)/61·62→12(督战)/71·72→6(威慑)，证据 `output/ghidra_all/FUN_00402ddc.c`。
+  - **Material（物资表）/ DiLeiRecipe（地雷配方矩阵）装载器偏移校正（2026-10-28，未提交）**：旧 C++ 误将 `Material` 列为 32B 且装载 `@0x7260`（落入 DiLei 块读脏数据）、`DiLeiRecipe` 装载 `@0x73A0`（落入 DiLei 块）。实测（Python 抽 `DLZFULL/GAME.DAT` + `template/dlz_game.bt` 平面布局复核）：**Material@`0x70E0`（28B/记录，10 条：粘土/石头/木料/铁块/火硝/硫磺/木炭粉/蝎钩/毒瘴菇/电池，价格 1/1/2/4/2/2/2/10/10/80）；DiLeiRecipe@`0x71F8`（10×10 矩阵，row0=[10,0,0,0,5,10,15,0,0,0]）**。`types.hpp` 的 `Material` 已由 32B→**28B**（`static_assert(sizeof==28)`），`dat_loader.cpp` 偏移已改 `0x70E0`/`0x71F8`，并新增 `MaterialNameAndPriceAligned` / `DiLeiRecipeMatrixAligned` 内容闸门（逐字节对拍真实文件）。`MaterialNameAligned` 旧断言（误钉 `@0x7260`）已同步纠正为 `@0x70E0`。
+  - **实证方法**：`DatLoader` 的解码值与 `template/dlz_game.bt` 平面布局 + Python 独立抽 `DLZFULL/GAME.DAT` 三方一致，杜绝"望文生义"偏移。
+
 ### Phase 5 — 地图与地形 / 寻路
 - 范围：地形网格 `0x584390`（`(row*g_map_grid_width+col)` ushort `>>12`）、地形修正 `0x475ab0`、地图宽 `0x57ba20`、寻路代价（被误归为 battle 的缓存块之一，须正名）；`g_pathfind_grid[MAP_GRID_CAP]`（`MAP_GRID_CAP=16384`，跨层差分已建 28+ 处 `=1`/`=0` 写入）。
 - **依赖（已就绪）**：Phase 4 已装载真实地形表（`GAME.DAT` 块#1 @`0x1E0` stride `0xA0`、地形修正 `0x475ab0`）、地形网格（`MAP.DAT` tile `>>12` stride 0x40）、地图宽 `0x57ba20`——全已接 `GameState`。
@@ -126,7 +133,7 @@
 
 ### G-Build（构建门 · 每次提交必过）
 - [ ] `cmake --build dlzr/build --config Release` **0 error**。
-- [ ] `dlzr_tests` **全部 PASS**（当前 227/227 基线，新增用例不得回退）。
+- [ ] `dlzr_tests` **全量 355 用例 / 354 PASS**（当前 1 已知失败 `Behavior12MovesWhenNoSkill`，Tier-B 近似缺口，见 §6#10 + §8；新增用例不得回退）。
 - [ ] 0 未解析外部符号、0 链接 red。
 - **判定**：不绿 = 任何"功能完成"声明无效，必须先复位绿。
 
@@ -171,7 +178,7 @@
 - **全局真语义**：≈**498/1914**（描述性名，证据强度不等）；其余为内容分类/区域占位/子结构偏移占位。
 - **子系统**：battle 子系统 pilot **已完成跨层差分闭环**——`FUN_004138ea` 16 分支 `replica`(oracle) ↔ `logic/battle`(clean) 0 分歧（SkillGridDiff 5 测含 CellDeathExp + 9 例 BattleCalc 跨层，全量 119/119 PASS）。T3-core（`FUN_0041307f` per-cell 伤害核心）与 T3-b（死亡/经验循环）已并入同闸门。剩余为 3-pass 管线集成（setup→`FUN_0041307f`→`FUN_004138ea` 的跨 pass 缓冲持久化）与 case 9 仓库语义，作为残余集成项。
 - 口径由 `scripts/build_re_map.py` 刷新，状态以 `output/re_map/status_summary.md` 为准。
-- **构建门总口径（2026-10-26 续）**：`dlzr_tests` 全量 **238/238 PASS**（含 `DatIoTest` 真实 IO 14/14）；Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
+- **构建门总口径（2026-10-28 刷新）**：`dlzr_tests` 全量 **355 用例 / 354 PASS**（含 `DatIoTest` 真实 IO 14/14）；1 已知失败 `Behavior12MovesWhenNoSkill`（AI 技能旗标门控未实现，Tier-B 近似缺口，非回归），见 §6#10 + §8。Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
 
 ---
 
@@ -187,6 +194,10 @@
 7. **`FUN_004138ea` 跨层差分闭环（2026-10-26）** + **T3-core `FUN_0041307f` per-cell 伤害核心（2026-10-25）**：16 分支 oracle(`replica/battle_sim.cpp`)/clean(`logic/battle/battle_sim.cpp`) 双语逐位一致，跨层差分 4 测 0 分歧；全量 118/118 PASS。跨层差分闸门**反例价值**正面体现：首跑即抛 SEH 0xc0000094（除零），根因为"有符号误读二进制无符号"——case 1 `local_5c=(uVar9*缓冲)/100` 被转录为 `int32_t`，当 `morale>100` 时 `100-108` 有符号得负→`local_5c` 假非零→除零；二进制实码 `100U-morale` 无符号回绕→不除。已按 Ghidra 把所有 `local_X` 收口为 `uint32_t`（§9.2）。另修正 case 1 non-player 贡献阈值 `<2?1`（二进制 `:172-173`，非 case 0 的 `<3?2`）。剩余诚实缺口：① case 9 仓库 `FUN_0042b23a`/`0x7db3a8` 双端 no-op 延后；② 3-pass 跨 pass 缓冲持久化未接 `GameState` 运行时；③ `0x21` 记录数组对 `idx>0` 斜向语义、`FUN_0043de50` 播种源待实证（§9.3）。
 8. **T3-b `FUN_0041307f` 死亡/经验循环（2026-10-25）**：接 T3-core 之后，双语（oracle `battle_calc_apply_death_experience` / clean `apply_death_experience`）逐指令转录 `FUN_0041307f.c:146-195`——阵亡判定(`hp==0||morale==0`→`active_flag=0`)、击杀经验 `battle_calc_kill_exp(occ,attacker)` 累加、敌方物品回收 `count_unit_skills`(FUN_0042afd2)、阵亡计数(`g_aux_counter_b/a`)、主将 HP 封顶(`max_hp(0)`)+剩余单位倒数地板 1、末尾 `battle_calc_gain_exp` 应用总经验；`BattleGridState` 扩 `experience`/`lost_player`/`lost_enemy`/`battle_win_mode`/`player_units_remaining`/`item_recovery[256]`，`mirror_grid` 同步。新增 `TEST(SkillGridDiff, CellDeathExp)`（N=10000）。**全量 119/119 PASS**。修复：oracle 死亡循环原读 `g_grid_rows`（被测试 `resize_grid_buffers(13,13)` 占位污染成 13×13，而 `big=0` 应 9×9，遍历越界致 oracle_total=5652 vs clean_total=1096）→ 改从 `g_battle_double_grid` 派生尺寸（与二进制 `:36-47` 一致），pass-1 同步维护 `g_grid_rows`/`g_grid_cols` 防其它读取者踩坑。
 9. **regen 保真 backlog 已清零（2026-10-26 续十八/十九）**：原 5/6 个 stateful-stub 失败实为 `bak_promote` 转录体两类系统性 bug——① `int32_t*` 指针-hack 索引放大 4×（people/skill 数组按 int 元素步进而非字节步长，落到错字节）；② 硬编码绝对地址 `0x833414` 写入（replica 未映射 → SEH 0xc0000005）。两处已修（`replica_stubs.c` 改直接数组索引 `people_array[N].enemy`/`skill_array[N].movement_index` + 写 `g_game_state.g_grid_833414[(y*W)+x]`），全量 **227/227 PASS**。残留工程债（未清，2026-10-26 续实测更正）：`replica_stubs` 仍依赖 `.bak_*` 手修态 + 手工编辑；本 turn 验证"重生成可复现绿态"为**假绿**——生成器输出偏离 3733 行且自身 17 编译错误编不过，须把手工补丁折回 `gen_replica_stubs.py` 方能收口（候选 3 regen 阻塞项）。
+
+10. **`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` 已知失败（2026-10-28 实测 · 非本任务回归）**：战斗 AI 派发在 behavior=12 满血满士气、敌在射程时，期望**无技能旗标→全技能列回退→纯移动(MOVE)**，但 replica 的 `ai_try_skill` **未实现二进制技能旗标门控**——`FUN_00402ddc` 的每个技能 ai_type（0x1f/0x29/0x2a/0x33/0x34/0x3d/0x3e/0x47/0x48）首行均为 `if (*(int*)(&DAT_007d0fXX + param_1*0x84) == 0) return 0;`（即旗标为 0→无决策→回退），replica 漏了这层门控，致技能 ai_type 无条件发射 SKILL，截断回退链。
+    - **根因定位**：属 `BattleEngine::dispatch_ai_type`/`ai_try_skill`（Tier-B 近似），测试注释本身已标注「技能 id 与威胁旗标门控为 Tier-B 近似，不在本闸门范围」（test_enemy_ai_dispatch.cpp:277）；但 `Behavior12MovesWhenNoSkill` 单独钉了旗标回退行为，与同文件其它「不设旗标也期望 SKILL」的 ai_type→skill_id 映射测试（AiType31MapsToSkill15AirRaid / AiType41…/51…/71…/61…）**内部不一致**——这些测试在 fixture 未置旗标却期望 SKILL。
+    - **修复路径（待开专项）**：① 在 `Fighter`/`BattleState` 落「每技能旗标」字段，映射二进制 `DAT_007d0f44/5c/60/64/68` 五个旗标数组（按技能归类）；② `ai_try_skill` 首行查对应旗标，0→`NONE`（回退）；③ 把上述 5 个「不设旗标期望 SKILL」的测试改为「置旗标后期望 SKILL」以消内部矛盾。此项与数据装载（本任务）无关，列为专项 backlog，不在本次收口范围。
 
 ---
 
@@ -268,3 +279,42 @@
   - **A. 数组区域 struct 重构**：扫描 Ghidra 把每个"被当数组用的标量区域"按其实测尺寸声明为数组，改写所有访问点 → 解锁 ~59 标量基址桩 + 真实语义化。工作量中，但触及 1914 全局布局、需全量回归。
   - **B. AI/战斗逻辑 stateful 桩直测**：挑 `people_cond_a/b`、`collect_active_slot_idx`、`ai_find_enemy_unit_wrap` 等**已正确声明为真实数组**（people_array/fighter_array）且无越界的桩，布设 fighter_array/people_array 受控态对拍（不碰标量基址区域）。纯增量、零风险，但覆盖的是"已数组化"子集，绕开结构性墙。
   - **C. 暂停覆盖抬升，转 Phase 推进**：覆盖抬升边际收益已低（纯函数枯竭 + 结构性墙），资源转回 Phase 5/6/8 主线（地图/对话/数据装载）更有杠杆。
+
+---
+
+## 8. 010 Editor 模板权威纪律与装载器合规审计（2026-10-28 立）
+
+> 本节约等于 §1 铁律零的"数据装载"实施细则，由用户强制令确立：**所有从二进制数据文件读取的数据，其布局/偏移/步长/字节序一律以 `template/*.bt` 为唯一权威 schema**。
+
+### 8.1 纪律正文
+1. **模板即真理**：`template/*.bt` 是二进制格式的唯一权威描述。凡 loader 里的偏移/尺寸/步长常量，必须与对应 `.bt` 的结构字段逐一对齐；冲突时改代码不改模板。
+2. **先查模板再改偏移**：新增或修正任何 loader 偏移前，先 `grep`/`读` 对应 `.bt` 确认字段基址与步长，再落代码；禁止"凭内存地址猜测"或"凭旧 data_dictionary.md 记错地址"（data_dictionary.md 多处误标，如兵种表误标 0x0320，已被 `template/dlz_game.bt` + Python 抽取证伪）。
+3. **怀疑顺序**：当"模板算出来的值"与"Python 抽真实文件实测值"不符时，**先怀疑自己的换算/读数/字节序理解**，`dlz_game.bt` 经用户实证为正确（见 8.3）；凡曾误判模板偏移的内部笔记一律作废。
+4. **注释留痕**：每个 loader 在对应解析段注释里 `@ref template/<x>.bt`，并写明实测块基址（如 `Material@0x70E0`，28B/记录），使"代码↔模板↔实测"三方可溯。
+5. **数据校验闸门**：关键装载表加"逐字节/逐字段对拍真实文件"的测试（如 `MaterialNameAndPriceAligned` / `DiLeiRecipeMatrixAligned` / `JiNengNameAndParamsAligned`），独立于代码逻辑二次校验偏移正确性。
+
+### 8.2 装载器 ↔ 模板合规审计表
+
+| 装载器 / 数据源 | 权威 `.bt` 模板 | 关键基址 / 步长（模板实测） | 合规状态 | 备注 |
+|---|---|---|---|---|
+| `DatLoader::load_game_data` — 兵种表 ClassType | `dlz_game.bt` | `0x1E0`，160B/记录 | ✅ 合规 | 反驳 data_dictionary 误标 0x0320 |
+| `DatLoader::load_game_data` — 物品 WuPin | `dlz_game.bt` | `0x43E0` | ✅ 合规 | 文件尾块 |
+| `DatLoader::load_game_data` — 材料 Material | `dlz_game.bt` | `0x70E0`，**28B/记录** | ✅ 已校（2026-10-28） | 旧误 32B@0x7260 → 改 28B@0x70E0 |
+| `DatLoader::load_game_data` — 地雷配方 DiLeiRecipe | `dlz_game.bt` | `0x71F8`，10×10 | ✅ 已校（2026-10-28） | 旧误 @0x73A0 → 改 @0x71F8 |
+| `DatLoader::load_game_data` — 地雷 DiLei | `dlz_game.bt` | `0x725C`，48B/记录 | ✅ 合规 | `pad0@+0x10` 实为 `weili`（命名习惯） |
+| `DatLoader::load_game_data` — 技能 JiNeng | `dlz_game.bt` | `0x743C`，48B/记录 | ✅ 合规（927d893） | — |
+| `DatLoader::load_game_data` — 技能形状 SelectFanwei/ApplyFanWei | `dlz_game.bt` | `0x773C` / `0x7C4C`(=块#11 off 31820) | ✅ 合规 | — |
+| `DatLoader::load_fight` — FIGHT.DAT | `dlz_fight.bt` / `dlz_people.bt` | 700B intro@0x7d01c8；128×0x40 fighters@0x96ab90；88×0x84 people@0x7d2398 | ✅ 合规 | 文件 963876 = 47×20508 |
+| `DatLoader::load_towns` — TOWN.DAT | `dlz_town.bt` | 346B/记录，`#pragma pack(1)` | ✅ 合规 | — |
+| `DatLoader::load_map` — MAP.DAT | `dlz_map.bt` | tile `>>12`，stride 0x40 | ✅ 合规 | 地形网格 `0x584390` |
+| `DatLoader::load_blk_group` — BLK | `dlz_blk.bt` | 块#11 等 | ✅ 合规 | — |
+| `DatLoader::load_dialogues` — TXT.DAT | `dlz_game.bt`（对话段） | XOR 0x51 GBK，593 条 | ✅ 合规 | 令牌 AA/BB/CC/DD 配色 `FUN_004061df.c` |
+| `DatLoader::load_wave_clip` — WAVE | `dlz_wave.bt` | — | ✅ 合规 | — |
+| `DatLoader::load_game_data` — 物资/地形修正/移动代价 | `dlz_game.bt` / `dlz_people.bt` | 地形修正 `0x475ab0`；兵种×物品 `0x95eb88` | ✅ 合规 | — |
+| 存读档 `save_game` | `dlz_save.bt` | `.bt` 注释地址不可信，须以 save/load 代码重派生 | ⚠️ 待复核 | 与 §9 存读档 Phase 关联；模板仅作字段名参考，基址自派生 |
+
+> 说明：`dlz_game.bt` 已获用户实证的平面布局校验（Material/DiLeiRecipe/DiLei/JiNeng/SelectFanwei/ApplyFanWei 全部与真实文件解码一致），为全工程最可靠的数据 schema 基准。
+
+### 8.3 `dlz_game.bt` 正确性正名（作废旧误判）
+- 曾有误记"模板的扁平偏移算错（DiLei 应为 0x74BC / JiNeng 应为 0x769C / Material 应为 32B）"的内部草稿笔记 —— **经用户实证 + 重新按真实结构体尺寸平铺核算，模板完全正确**，误记源于自身换算错误（把 `(&DAT_0096abXX)[i*0x10]` 的 int 下标误当字节步长 0x10，实则字节步长 0x40）。
+- 结论：**模板零错误**，所有"模板错了"的笔记一律作废；本工程从此以 `template/*.bt` 为数据格式唯一仲裁。

@@ -142,10 +142,11 @@ TEST(GameDatContent, JiNengNameAndParamsAligned) {
 }
 
 // ---- DiLei（地雷）记录对齐闸门 ----
-// RE 实证（权威 010 模板 + DLZFULL/GAME.DAT @0x725C 逐字节抽取，铁律零坐标）：
-// 每条 48B，名称位于记录 +0x00（无前导文件头）。010 模板在 name 与 price 间误插 phantom
-// pad0，真实文件无此字段。旧结构体误加 8B header 且 name 推到 +0x08，致 weili/price 读穿相邻块。
-// 真实 10 条：土雷(60/0/100)…轰天雷(800/800/109)。本测试钉死正确对齐（@0x725C，name@+0x00）。
+// RE 实证（权威 010 模板 template/dlz_game.bt DiLei 结构 + DLZFULL/GAME.DAT @0x725C 逐字节抽取）：
+// 每条 48B，名称位于记录 +0x00。模板在 name 与 price 间标了 pad0(@+0x10)，但真实文件该位
+// 实为 weili（模板命名瑕疵、字节位置一致）；C++ 以 weili@+0x10 起。旧结构体误加 8B header
+// 且 name 推到 +0x08，致 weili/price 错位。真实 10 条：土雷(weili60/price?/audio100)…轰天雷(800/800/109)。
+// 本测试钉死正确对齐（@0x725C，name@+0x00，weili@+0x10，audio_index@+0x2C）。
 TEST(GameDatContent, DiLeiNameAndParamsAligned) {
     dlzr::app::DatLoader loader(kGameDataDir);
     auto gd = loader.load_game_data();
@@ -163,6 +164,62 @@ TEST(GameDatContent, DiLeiNameAndParamsAligned) {
     EXPECT_EQ(gd.mines[9].weili, 800);
     EXPECT_EQ(gd.mines[9].price, 800);
     EXPECT_EQ(gd.mines[9].audio_index, 109);
+}
+
+// ---- Material（锻造材料）记录对齐闸门 ----
+// RE 实证（权威 010 模板 template/dlz_game.bt Material 结构 + DLZFULL/GAME.DAT @0x70E0 逐字节抽取）：
+// 每条 28B = name[16]/unit[8]/price[4]，名称位于记录 +0x00。旧 C++ 误加成 32B 且装载器偏移
+// 误置 0x7260（落入 DiLei 块读脏数据）。真实 10 条：粘土/石头/木料/铁块/火硝/硫磺/木炭粉/
+// 蝎钩/毒瘴菇/电池（单位 斤/块/两/只/个，价格 1/1/2/4/2/2/2/10/10/80）。本测试钉死 28B 对齐
+// 与真实值（@0x70E0，name@+0x00，price@+0x18）。
+TEST(GameDatContent, MaterialNameAndPriceAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+    ASSERT_GE(gd.materials.size(), 10u);
+
+    // 名称位于记录 +0x00；独立从 GAME.DAT@0x70E0 + i*28 抽取 16 字节对拍。
+    for (int i = 0; i < 10; ++i) {
+        auto name_raw = raw_name_at(kGameDataDir, 0x70E0 + static_cast<size_t>(i) * 28u);
+        EXPECT_TRUE(std::memcmp(gd.materials[i].name.data(), name_raw.data(), 16) == 0)
+            << "materials[" << i << "].name 应与 GAME.DAT@0x70E0+i*28 的 16 字节一致";
+    }
+
+    // 真实文件值（python 抽取 @0x70E0，28B 步长）：
+    //   粘土 price=1 / 石头 price=1 / 木料 price=2 / 铁块 price=4 /
+    //   火硝 price=2 / 硫磺 price=2 / 木炭粉 price=2 / 蝎钩 price=10 / 毒瘴菇 price=10 / 电池 price=80。
+    const int32_t expect_price[10] = {1, 1, 2, 4, 2, 2, 2, 10, 10, 80};
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_EQ(gd.materials[i].price, expect_price[i])
+            << "materials[" << i << "].price 应=文件真实值 " << expect_price[i]
+            << "（旧 0x7260 偏移/32B 误读会落到 DiLei 块→垃圾）";
+    }
+}
+
+// ---- DiLeiRecipe（地雷配方矩阵）记录对齐闸门 ----
+// RE 实证（权威 010 模板 template/dlz_game.bt DiLeiRecipe（char recipe[10]）+
+//   DLZFULL/GAME.DAT @0x71F8 逐字节抽取）：10×10 矩阵，matrix[row=材料][col=地雷]=数量。
+// 旧装载器偏移误置 0x73A0（落入 DiLei 块读脏数据）。本测试钉死 @0x71F8 与真实矩阵值。
+TEST(GameDatContent, DiLeiRecipeMatrixAligned) {
+    dlzr::app::DatLoader loader(kGameDataDir);
+    auto gd = loader.load_game_data();
+
+    // 独立从 GAME.DAT@0x71F8 抽取 100 字节与 DatLoader 产出逐字节对拍。
+    auto raw = raw_gamedat_slice(kGameDataDir, 0x71F8, 100u);
+    ASSERT_EQ(raw.size(), 100u);
+    for (int r = 0; r < 10; ++r) {
+        for (int c = 0; c < 10; ++c) {
+            EXPECT_EQ(gd.mine_recipe.matrix[r][c], raw[static_cast<size_t>(r) * 10u + c])
+                << "mine_recipe[" << r << "][" << c
+                << "] 与 GAME.DAT@0x71F8 原始字节不符（旧 0x73A0 偏移回归？）";
+        }
+    }
+
+    // 真实文件值（python 抽取 @0x71F8，10×10）：石雷配方 row0=[10,0,0,0,5,10,15,0,0,0]。
+    const uint8_t expect_row0[10] = {10, 0, 0, 0, 5, 10, 15, 0, 0, 0};
+    for (int c = 0; c < 10; ++c) {
+        EXPECT_EQ(gd.mine_recipe.matrix[0][c], expect_row0[c])
+            << "mine_recipe[0][" << c << "] 应=石雷配方真实值";
+    }
 }
 
 // ---- ClassType（兵种）名称偏移闸门（钉死 0x1E0，杜绝 data_dictionary 误标 0x0320）----
@@ -280,9 +337,10 @@ TEST(GameDatContent, MaterialNameAligned) {
     auto gd = loader.load_game_data();
     ASSERT_GT(gd.materials.size(), 0u);
 
-    auto name0 = raw_name_at(kGameDataDir, 0x7260);
+    // 权威 010 模板 template/dlz_game.bt Material 基址 0x70E0（28B 步长，名称@+0x00）。
+    auto name0 = raw_name_at(kGameDataDir, 0x70E0);
     EXPECT_TRUE(std::memcmp(gd.materials[0].name.data(), name0.data(), 16) == 0)
-        << "materials[0].name 应=@0x7260 的 16 字节（雷…）";
+        << "materials[0].name 应=@0x70E0 的 16 字节（粘土…）";
 }
 
 // People（PEOPLE.DAT）：132B 记录步长，名称@+0x00，class_type@+0x2C。

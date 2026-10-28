@@ -3,6 +3,24 @@
 //
 // 直接读取原始二进制文件，结构体布局严格匹配原作内存布局。
 // Reads original binary files directly; struct layouts match original memory.
+//
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ 铁律级纪律：所有从二进制文件读取的数据，必须参考 010 Editor 模板           ║
+// ║ (template/*.bt) 作为权威 schema。模板（含 dlz_game.bt 的「扁平拼接偏移」） ║
+// ║ 经验证是准确的：用模板真实 struct 尺寸重算 GAME.DAT 扁平布局，得到        ║
+// ║   ClassType@0x1E0 · WuPin@0x43E0 · Material@0x70E0 · DiLeiRecipe@0x71F8 · ║
+// ║   DiLei@0x725C · JiNeng@0x743C · ApplyFanWei@0x7C4C(=技能形状表 off 31820)║
+// ║ 与真实二进制逐字节 decode 完全一致；ApplyFanWei@0x7C4C 亦与代码注释的     ║
+// ║ 技能形状表偏移吻合。2026-10-28 修复的 bug 源自我方代码（JiNeng/DiLei 误加 ║
+// ║ 8B phantom 头 + 装载器偏移误写成 0x75E4/0x7404），非模板之过。           ║
+// ║   · 因此：禁止脱离模板手造结构体 / 偏移；改 / 新增文件读取须对照对应 .bt  ║
+// ║     并用真实二进制 decode 复核（铁律零「望文生义」陷阱）。                 ║
+// ║   · 注意：Material 在模板为 28B（name16+unit8+price4），本工程 C++ 曾误   ║
+// ║     加成 32B 且偏移误置 0x7260；DiLeiRecipe 偏移曾误置 0x73A0。二者须按   ║
+// ║     模板修正为 Material@0x70E0(28B) / DiLeiRecipe@0x71F8(10B)，否则与    ║
+// ║     DiLei@0x725C 重叠读脏数据（见下方 load_game_data 修正）。            ║
+// ║   各装载器下方均标注其对应模板文件名，新增 / 改动文件读取代码须同步标注。    ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 
 #include "app/resource/dat_loader.hpp"
 
@@ -44,13 +62,13 @@ core::GameData DatLoader::load_game_data() const {
     //   +0x1E0: BingZhong[96] (15360 B) — ClassType（真实基址，非 data_dictionary 的 0x0320）
     //   +0x3F20: BingZhongYiDong[96] (1536 B)           （地形移动消耗，本加载器暂未使用）
     //   +0x43E0: WuPin[160] (11520 B) — Items
-    //   +0x7260: Material[10] (320 B)
-    //   +0x73A0: DiLeiRecipe[10] (100 B)
-    //   +0x725C: DiLei[10] (480 B)                      （010 模板结构 + GAME.DAT 实证；旧 0x7404 为错位）
-    //   +0x743C: JiNeng[16] (768 B)                     （010 模板结构 + GAME.DAT 实证；旧 0x75E4 为错位）
-    //   +0x78E4: SelectFanwei[16] (1296 B)
-    //   +0x7DF0: ApplyFanwei[48] (9408 B)
-    //   +0xA310: WuPinValid[160×96] (15360 B) — 兼容矩阵（本加载器按文件末尾 15360 字节读取）
+    //   +0x70E0: Material[10] (280 B)                   （010 模板 dlz_game.bt Material 结构：name16+unit8+price4=28B）
+    //   +0x71F8: DiLeiRecipe[10] (100 B)                （010 模板 DiLeiRecipe：10×10 配方矩阵）
+    //   +0x725C: DiLei[10] (480 B)                      （010 模板结构 + GAME.DAT 实证；旧装载器误写 0x7404）
+    //   +0x743C: JiNeng[16] (768 B)                     （010 模板结构 + GAME.DAT 实证；旧装载器误写 0x75E4）
+    //   +0x773C: SelectFanwei[16] (1296 B)
+    //   +0x7C4C: ApplyFanWei[48] (9408 B)               （= 技能形状表 off 31820，FUN_00424566 块#11）
+    //   +0xA41C: WuPinValid[160×96] (15360 B) — 兼容矩阵（文件末 15360 字节）
     {
         BinaryReader reader(resolve("GAME.DAT"));
 
@@ -83,16 +101,23 @@ core::GameData DatLoader::load_game_data() const {
             reader.read_bytes(offset, &gd.mines[i], sizeof(core::DiLei));
         }
 
-        // Material[10]: 10 × 32 bytes at offset 0x7260 (29280)
-        constexpr size_t kMaterialOffset = 0x7260;
+        // Material[10]: 10 × 28 bytes at offset 0x70E0 (29024)。
+        // 证据：template/dlz_game.bt Material 结构（name16+unit8+price4=28B）+ 真实
+        //   GAME.DAT @0x70E0 逐字节 decode：粘土/石头/木料/铁块/火硝/硫磺/木炭粉/蝎钩/
+        //   毒瘴菇/电池（单位 斤/块/两/只/个，价格 1/1/2/4/2/2/2/10/10/80）。
+        //   ⚠️ 旧装载器误置 0x7260 且 C++ 误加成 32B，落入 DiLei 块读脏数据。
+        constexpr size_t kMaterialOffset = 0x70E0;
         for (int i = 0; i < 10; ++i) {
             size_t offset = kMaterialOffset + static_cast<size_t>(i) * sizeof(core::Material);
             if (offset + sizeof(core::Material) > reader.size()) break;
             reader.read_bytes(offset, &gd.materials[i], sizeof(core::Material));
         }
 
-        // DiLeiRecipe: 10×10 bytes at offset 0x73A0 (29600)
-        constexpr size_t kRecipeOffset = 0x73A0;
+        // DiLeiRecipe: 10×10 bytes at offset 0x71F8 (29176)。
+        // 证据：template/dlz_game.bt DiLeiRecipe（char recipe[10]）+ 真实 GAME.DAT
+        //   @0x71F8 逐字节 decode：row0=[10,0,0,0,5,10,15,0,0,0] …（地雷配方矩阵）。
+        //   ⚠️ 旧装载器误置 0x73A0，落入 DiLei 块读脏数据。
+        constexpr size_t kRecipeOffset = 0x71F8;
         if (kRecipeOffset + sizeof(core::DiLeiRecipe) <= reader.size()) {
             reader.read_bytes(kRecipeOffset, &gd.mine_recipe, sizeof(core::DiLeiRecipe));
         }
