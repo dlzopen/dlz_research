@@ -15,7 +15,7 @@
 | 命名诚实度 | `g_const_`=**0**、`gs_00` 残留=**0**；但真·游戏语义名 ≈498/1914，其余为内容分类/区域占位/子结构偏移占位 | `renames.csv` 分类拆分 |
 | 结构化区域 | **Fighter / People / ClassType / Skill** 四块字段偏移与二进制 1:1（GameState 成员） | `types.hpp`/`game_data.hpp`/`battle_state.hpp` + Ghidra 对拍 |
 | 战斗数值内核（pilot） | **14 个战斗数值函数已语义化转发** + 独立 `ref_*` 逐指令转录 + 随机对拍 **100,000 次 0 分歧**；另建 **clean↔oracle 跨层差分**（9 例 + `SkillGridDiff` 3 例，含 1–2 万次随机对拍 0 分歧） | `replica/battle_calc.cpp`、`tests/test_battle_calc.cpp`、`tests/test_cross_layer_diff.cpp`、`tests/test_skill_grid_diff.cpp` |
-| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 358 总 / 357 PASS / 1 已知失败**（`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` —— AI 技能旗标门控未实现，Tier-B 近似缺口，见 §6#10 + §8）。含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock | `cmake --build` 已验证（2026-10-28） |
+| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 362 总 / 361 PASS / 1 已知失败**（`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` —— AI 技能旗标门控未实现，Tier-B 近似缺口，见 §6#10 + §8）。含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock | `cmake --build` 已验证（2026-10-28） |
 | 架构分层 | **转录/oracle 层**（`src/replica/`）+ **clean 复刻层**（`src/core` `src/logic` `src/presentation` `src/platform`） | `find dlzr/src -maxdepth 2 -type d` |
 | clean 层已有结构 | `logic/`：battle, combat, dialogue, save, level(LevelEventManager), promotion, character, crafting, forging, hidden_level, strategic；`presentation/`：battle, dialogue, title, opening, ending, ui, font, animation, audio 等 | 同名 `.hpp` 存在 |
 
@@ -117,6 +117,7 @@
   - `GameStateManager` 状态机已落地（`init` 真装载 `load_game_data()`+`load_towns()`、置 TITLE；`set_mode` 模式跳转；score/ending/difficulty/fight-completion 均有单测 `test_game_state_manager.cpp`）。
   - **真实数据→模式切换→战斗装配→单位驱动的无头集成闸已建**（`tests/test_game_flow.cpp` 3 测全绿）：① `GameStateManager` 初始 TITLE 且装载真实兵种表、TITLE→CHARACTER_SELECT→STRATEGIC_MAP→BATTLE→RESET 跳转一致；② 真实 fight0/map0 装载、map0=20×26、BattleEngine 装配后单位部署/网格地形缓冲按地图尺寸填充/未结束；③ 驱动一个已部署玩家单位算移动范围并移动到可达格、不崩溃不自洽破坏。
   - 主循环 + 模式→场景分发已在 `src/main.cpp`（1825 行）接好全部 renderer/子系统（title/character_select/dialogue/battle/strategic/town/shop/forging/save_load/ending/opening…），`gsm.mode()`/`set_mode()` 驱动。
+  - **业务系统无头集成闸已建（2026-10-28）**：`tests/test_forging_system.cpp` 4 测全绿，首个把「真实 `Material`/`DiLeiRecipe` 数据（GAME.DAT @0x70E0/@0x71F8，已 RE）→ `ForgingSystem` 合成逻辑（门槛/扣减/增产/扣金/价格表）」串起来的 Phase 8 业务系统验证；含多材料配方约束（item 0 单材料精确 max=10、item 4/5/6 多材料缺料归零、给全料后 oracle 自洽）+ `execute_craft` 边界（材料不足不改动状态）。
 - **缺口（真·Tier A 行为测试）**：main.cpp 内联的"模式→场景分发"逻辑仍以单体脚本形式存在，未抽成可单测 `GameApp` 类；各 Mode 的**逐项坐标/时序/输入** Tier A 核对需真机运行 + 逐 renderer RE 证据（无头测试只能验逻辑脊、验不了渲染像素）。这是 Phase 8/11 剩余验收缺口，非阻塞当前绿态。
 - **交付物 / 闸（G-TierA）**：状态机 + 集成脊已满足；各 Mode 跳转的逐像素 Tier A 行为测试列为后续（依赖 GUI 实证）。
 
@@ -143,7 +144,7 @@
 
 ### G-Build（构建门 · 每次提交必过）
 - [ ] `cmake --build dlzr/build --config Release` **0 error**。
-- [ ] `dlzr_tests` **全量 355 用例 / 354 PASS**（当前 1 已知失败 `Behavior12MovesWhenNoSkill`，Tier-B 近似缺口，见 §6#10 + §8；新增用例不得回退）。
+- [ ] `dlzr_tests` **全量 362 用例 / 361 PASS**（当前 1 已知失败 `Behavior12MovesWhenNoSkill`，Tier-B 近似缺口，见 §6#10 + §8；新增用例不得回退）。
 - [ ] 0 未解析外部符号、0 链接 red。
 - **判定**：不绿 = 任何"功能完成"声明无效，必须先复位绿。
 
@@ -188,7 +189,7 @@
 - **全局真语义**：≈**498/1914**（描述性名，证据强度不等）；其余为内容分类/区域占位/子结构偏移占位。
 - **子系统**：battle 子系统 pilot **已完成跨层差分闭环**——`FUN_004138ea` 16 分支 `replica`(oracle) ↔ `logic/battle`(clean) 0 分歧（SkillGridDiff 5 测含 CellDeathExp + 9 例 BattleCalc 跨层，全量 119/119 PASS）。T3-core（`FUN_0041307f` per-cell 伤害核心）与 T3-b（死亡/经验循环）已并入同闸门。剩余为 3-pass 管线集成（setup→`FUN_0041307f`→`FUN_004138ea` 的跨 pass 缓冲持久化）与 case 9 仓库语义，作为残余集成项。
 - 口径由 `scripts/build_re_map.py` 刷新，状态以 `output/re_map/status_summary.md` 为准。
-- **构建门总口径（2026-10-28 续）**：`dlzr_tests` 全量 **358 用例 / 357 PASS**（含 `DatIoTest` 真实 IO 14/14 + 新增 `GameFlow` 集成闸 3 测）；1 已知失败 `Behavior12MovesWhenNoSkill`（AI 技能旗标门控未实现，Tier-B 近似缺口，非回归），见 §6#10 + §8。Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）+ Phase 8/11（无头集成脊）+ Phase 9（存读档字节保真）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
+- **构建门总口径（2026-10-28 续）**：`dlzr_tests` 全量 **362 用例 / 361 PASS**（含 `DatIoTest` 真实 IO 14/14 + `GameFlow` 集成闸 3 测 + `ForgingSystem` 业务系统闸 4 测）；1 已知失败 `Behavior12MovesWhenNoSkill`（AI 技能旗标门控未实现，Tier-B 近似缺口，非回归），见 §6#10 + §8。Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）+ Phase 8/11（无头集成脊）+ Phase 9（存读档字节保真）+ Phase 8 业务系统（锻造）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
 
 ---
 
