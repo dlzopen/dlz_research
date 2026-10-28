@@ -101,6 +101,17 @@ TEST_F(SaveSystemTest, LoadRealSaveAnchorsPeople0AndProgress) {
     // 进度字段自洽
     EXPECT_GE(gd.current_fight_index, 0);
     EXPECT_LE(gd.current_fight_index, 47);
+
+    // people[0] = 孙悟空/主角（用户确认：编号0是占位的孙悟空，同时也是主角），
+    // 必须解码为"孙悟空"且为我方(faction=0)，不得被跳过/清零。
+    // 名称原始字节（GBK）= cb ef ce f2 bf d5 ... = "孙悟空"（证据：DLZFULL/save0.dat @17696）。
+    static constexpr uint8_t kSunWukongName[16] = {
+        0xcb, 0xef, 0xce, 0xf2, 0xbf, 0xd5, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    EXPECT_EQ(0, std::memcmp(gd.people[0].name.data(), kSunWukongName, 16))
+        << "people[0] 名称必须解码为'孙悟空'(孙悟空/主角)，不得被跳过或清零";
+    EXPECT_EQ(0, gd.people[0].enemy)
+        << "people[0] 必须为我方(faction=0)，即主角孙悟空";
 }
 
 // —— 无损往返：加载真实存档 → 另存临时目录 → 重载，各主块字节一致 ——
