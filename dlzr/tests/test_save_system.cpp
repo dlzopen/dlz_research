@@ -114,6 +114,25 @@ TEST_F(SaveSystemTest, LoadRealSaveAnchorsPeople0AndProgress) {
         << "people[0] 必须为我方(faction=0)，即主角孙悟空";
 }
 
+// —— peek_save_info（UI 槽位摘要：fight_index/town/gold）必须对齐真实文件偏移 ——
+// 偏移（与 kBlockOffset 一致）：B1=4 / B6=720 / B18(warehouse[0]=gold)=51488。
+// 证据：DLZFULL/save0.dat 实测 fight_index=5, town=7, gold=0。
+TEST_F(SaveSystemTest, PeekSaveInfoMatchesRealFile) {
+    auto p = save_path(0);
+    if (!fs::exists(p)) {
+        GTEST_SKIP() << "需要 DLZFULL/save0.dat（设置 DLZR_DATA_DIR）";
+    }
+
+    app::SaveLoader loader(data_dir_);
+    auto info = loader.peek_save_info(0);
+    ASSERT_TRUE(info.exists) << "peek 必须能识别真实存档槽位 0";
+
+    EXPECT_EQ(5, info.fight_index) << "peek fight_index 必须 == 真实文件偏移 4 的值";
+    EXPECT_EQ(7, info.current_town) << "peek town 必须 == 真实文件偏移 720 的值";
+    const int peek_gold = static_cast<int>(info.gold);
+    EXPECT_EQ(0, peek_gold) << "peek gold 必须 == 真实文件偏移 51488(warehouse[0]) 的值";
+}
+
 // —— 无损往返：加载真实存档 → 另存临时目录 → 重载，各主块字节一致 ——
 // 这是复刻层最关键的保真闸门：loader 写入的 28 块必须能原样读回，
 // 不丢字节、不错位。people 块若只写了 40/128 条会让文件缩水到 73456B，此测试直接失败。
