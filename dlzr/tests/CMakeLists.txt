@@ -22,6 +22,7 @@ add_executable(dlzr_tests
     test_game_dat_content.cpp
     test_combat_formula_anchors.cpp
     test_campaign_recruitment.cpp
+    test_case9_item_recovery.cpp
     test_boot.cpp
     test_dialogue_render.cpp
     test_dialogue_format.cpp

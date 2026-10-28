@@ -97,7 +97,7 @@ static void apply_special_scores(uint32_t a, uint32_t o) {
 //      item_idx>=0x9c → 返回 2（物品丢弃，不进仓库）。
 //   3) FUN_004290f8(recipient)：把 recipient.items 非零项压实到前端（8 字节），memcpy 回写。
 // 注意：FUN_0043de50(dest,src,8) 在此即 8 字节内存拷贝（memcpy），直接以内联压实替代。
-static void battle_calc_take_item_to_depot(uint32_t recipient_idx, uint32_t donor_idx) {
+void battle_calc_take_item_to_depot(uint32_t recipient_idx, uint32_t donor_idx) {
     auto& donor = g_game_state.people_array[donor_idx];
     int first = -1;
     for (int i = 0; i < 8; ++i) {
