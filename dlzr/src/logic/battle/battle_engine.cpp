@@ -338,8 +338,16 @@ void BattleEngine::init_fighters() {
         ++state_.fighter_count;
     }
 
-    // 回合上限：原版公式待逆向；暂用较宽松值，确保战斗可推进到分出胜负。
-    // Round limit: original formula pending RE. Generous value for now.
+    // 回合上限：RE 实证原版**无回合/时限**——战斗仅在一方被全歼时结束。
+    // 证据：主循环 FUN_004048d5(每回合)→FUN_0040479d(单回合)→FUN_00404004→FUN_00403f8e，
+    // 全程仅以 DAT_007d50f8(战斗结束旗) 控制循环；该旗由 FUN_00408f67/0907b/09307/
+    // 08d28/09279 在「单方 active 归零」时置位。回合计数器 DAT_00475aa4(FUN_004048d5:19
+    // 自增) 仅用于脚本事件触发(reinforcements@round<0x29=41 / 事件@round>0x14=20 /
+    // 脚本攻击@round>9 / 首回合事件@==1)，**不作回合上限**，全 RE 无 `DAT_00475aa4>=LIMIT` 比较。
+    // 故 50 是干净层防御性安全网(防测试死循环)，非原版行为；保留为安全上限。
+    // Round cap: binary has NO turn/time limit (battles end only when a side is wiped via
+    // DAT_007d50f8). DAT_00475aa4 is a round counter for scripted events only. max_rounds=50
+    // is a clean-layer safety net against infinite test loops, NOT original behavior.
     state_.max_rounds = 50;
 }
 
