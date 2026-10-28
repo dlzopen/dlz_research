@@ -26,7 +26,9 @@ constexpr int32_t BATTLE_CMD_ADVANCE_ROUND = 0x113;
 // ============================================================
 constexpr int32_t MAX_FIGHTER_SLOTS = 8;
 constexpr int32_t MAX_FIGHTERS_PER_SIDE = 128;
-constexpr int32_t MAX_PEOPLE = 40;
+constexpr int32_t MAX_PEOPLE = 40;            // 战役可登场名册上限 / Battle roster cap (playable)
+constexpr int32_t RUNTIME_PEOPLE_MAX = 128;   // 总共的战斗人员上限 / Total runtime people slots
+                                            // (原作运行时 people 数组 128 槽；存档块16/17 = 128×132B)
 constexpr int32_t MAX_CLASS_TYPES = 96;
 constexpr int32_t MAX_SKILLS = 16;
 constexpr int32_t MAX_WUPIN = 160;

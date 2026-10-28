@@ -106,12 +106,12 @@ bool SaveLoader::save_game(int32_t slot, const core::GameData& game_data) const 
     write_block(file, game_data.fighter_mirror.data(), 8192);
 
     // Block 16: people_array (16896 bytes = 128 × 132 bytes) @ 0x7D0EF8
-    for (size_t i = 0; i < core::MAX_PEOPLE && i < 128; ++i) {
+    for (size_t i = 0; i < core::RUNTIME_PEOPLE_MAX; ++i) {
         write_block(file, &game_data.people[i], sizeof(core::People));
     }
 
     // Block 17: people_array_mirror (16896 bytes = 128 × 132 bytes) @ 0x7D51A8
-    for (size_t i = 0; i < 128; ++i) {
+    for (size_t i = 0; i < core::RUNTIME_PEOPLE_MAX; ++i) {
         write_block(file, &game_data.people[i], sizeof(core::People));
     }
 
@@ -247,8 +247,9 @@ bool SaveLoader::load_game(int32_t slot, core::GameData& game_data) const {
     // Block 15: fighter_array_mirror (8192 bytes = 128 × 64 bytes)
     if (!read_block(file, game_data.fighter_mirror.data(), 8192)) return false;
 
-    // Block 16: people_array (16896 bytes = 128 × 132 bytes)
-    for (size_t i = 0; i < core::MAX_PEOPLE && i < 128; ++i) {
+    // Block 16: people_array (16896 bytes = 128 × 132 bytes) @ 0x7D0EF8
+    // 必须读满 128 条（与写侧一致）；否则后续块整体错位，map_grid 等会被读偏。
+    for (size_t i = 0; i < core::RUNTIME_PEOPLE_MAX; ++i) {
         if (!read_block(file, &game_data.people[i], sizeof(core::People))) return false;
     }
 

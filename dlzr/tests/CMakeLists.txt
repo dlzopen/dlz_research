@@ -34,6 +34,7 @@ add_executable(dlzr_tests
     test_bfs_destination.cpp
     test_retreat_destination.cpp
     test_enemy_ai_dispatch.cpp
+    test_save_system.cpp
     generated_stub_registry.cpp
     ${CMAKE_SOURCE_DIR}/src/heartbeat.cpp
 )

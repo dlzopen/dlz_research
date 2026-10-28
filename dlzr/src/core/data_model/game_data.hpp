@@ -19,7 +19,7 @@ namespace dlzr::core {
 // Global data loaded from original DAT files at runtime
 // ============================================================
 struct GameData {
-    std::array<People, MAX_PEOPLE> people;
+    std::array<People, RUNTIME_PEOPLE_MAX> people;  // 128 槽运行时 people 数组（原作存档块16/17 = 128×132B；[0..39]=战役名册，[40..127]=本关名册）
     std::array<ClassType, MAX_CLASS_TYPES> class_types;
     std::array<JiNeng, MAX_SKILLS> skills;
     std::array<Town, MAX_TOWNS> towns;
