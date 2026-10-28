@@ -125,7 +125,9 @@ private:
     // 表的下一列 ai_type）。ai_attack_in_place 复刻"原地攻击"(DAT_0044b230=0)。
     BattleCommand dispatch_ai_type(int32_t fighter_idx, int ai_type);
     BattleCommand ai_attack_in_place(int32_t fighter_idx);
-    BattleCommand ai_try_skill(int32_t fighter_idx);
+    // 技能类 ai_type（31/41/42/51/52/61/71/72）→ 精确二进制技能 id（FUN_00402ddc 写
+    // DAT_0044b240）：31→15(空袭) 41/42→13(暗杀) 51/52→14(施毒) 61/62→12(督战) 71/72→6(威慑)。
+    BattleCommand ai_try_skill(int32_t fighter_idx, int32_t ai_type);
     BattleCommand ai_try_mine(int32_t fighter_idx);
     BattleCommand ai_patrol(int32_t fighter_idx);
     BattleCommand ai_guard(int32_t fighter_idx);

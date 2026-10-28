@@ -106,51 +106,63 @@ static std::array<char, 16> raw_name_at(const std::string& dir, size_t off) {
 }
 
 // ---- JiNeng（技能）记录对齐闸门 ----
-// RE 实证：GAME.DAT @0x75E4，48B 记录 = [8B 头][16B 名@+0x08][para1..anm_index 共 6 int32]。
-// 旧结构体漏 8B 头，致 name 与 para1.. 整体错位 8B（calc_skill_effect 读到的 para1/para2
-// 实为名称尾字节）。本测试钉死对齐：名称 = 文件 +0x08 的 16 字节，且 para1/para2/type 等
-// 等于文件真实值（非名称垃圾）。
+// RE 实证（权威 010 模板 template/dlz_game.bt JiNeng 结构 + DLZFULL/GAME.DAT @0x743C 逐字节抽取）：
+// 每条 48B，名称位于记录 +0x00（无前导文件头），字段顺序 name[16]/para1/para2/type/
+// select_range/apply_range/anm_index/flm_index/audio_index。旧结构体误加 8B header 并把
+// name 推到 +0x08，致 para1/para2/type 整体错位 8B（读到名称尾字节）。本测试钉死正确对齐。
 TEST(GameDatContent, JiNengNameAndParamsAligned) {
     dlzr::app::DatLoader loader(kGameDataDir);
     auto gd = loader.load_game_data();
-    ASSERT_GT(gd.skills.size(), 0u);
+    ASSERT_GE(gd.skills.size(), 16u);
 
-    // 名称位于记录 +0x08（前 8 字节为文件头）。
-    auto name_raw = raw_name_at(kGameDataDir, 0x75E4 + 8);
-    EXPECT_TRUE(std::memcmp(gd.skills[0].name.data(), name_raw.data(), 16) == 0)
-        << "skills[0].name 应与 GAME.DAT@0x75E4+8 的 16 字节一致（掠夺…）；"
-           "若错配为记录头，说明 JiNeng 结构体仍漏 8B 文件头。";
+    // 名称位于记录 +0x00（前 8 字节不再是文件头）。
+    auto name_raw0 = raw_name_at(kGameDataDir, 0x743C);
+    EXPECT_TRUE(std::memcmp(gd.skills[0].name.data(), name_raw0.data(), 16) == 0)
+        << "skills[0].name 应与 GAME.DAT@0x743C 的 16 字节一致（补给…）";
 
-    // 真实文件值（python 抽取 DLZFULL/GAME.DAT @0x75E4）：
-    //   para1=0, para2=0, type=7, select_range=5, apply_range=0, anm_index=-1。
-    EXPECT_EQ(gd.skills[0].para1, 0)
-        << "para1 应=文件真实值 0；若为名称尾字节(垃圾) 说明仍错位。";
-    EXPECT_EQ(gd.skills[0].para2, 0)
-        << "para2 应=文件真实值 0";
-    EXPECT_EQ(gd.skills[0].type, 7)
-        << "type 应=文件真实值 7（掠夺的技能类型）；若=0 说明仍错位 8B。";
-    EXPECT_EQ(gd.skills[0].select_range, 5);
-    EXPECT_EQ(gd.skills[0].apply_range, 0);
-    EXPECT_EQ(gd.skills[0].anm_index, -1);
+    // 真实文件值（python 抽取 DLZFULL/GAME.DAT @0x743C，16 条技能名
+    // 补给/激励/医疗/火攻/滚木/擂石/威慑/骚扰/破坏/掠夺/反间/疑兵/督战/暗杀/施毒/空袭）：
+    //   补给 para1=120, type=0(TILI_ADD)；医疗 para1=120 para2=10 type=2(TILI_SHIQI_ADD)；
+    //   火攻 para1=80 type=3(TILI_REM)；掠夺 type=7(ZHUANGBEI_REM)；施毒 para1=180 para2=40；空袭 para1=400。
+    EXPECT_EQ(gd.skills[0].para1, 120);
+    EXPECT_EQ(gd.skills[0].type, 0);
+    EXPECT_EQ(gd.skills[2].para1, 120);
+    EXPECT_EQ(gd.skills[2].para2, 10);
+    EXPECT_EQ(gd.skills[2].type, 2);
+    EXPECT_EQ(gd.skills[3].para1, 80);
+    EXPECT_EQ(gd.skills[3].type, 3);
+    EXPECT_EQ(gd.skills[9].type, 7);
+    EXPECT_EQ(gd.skills[14].para1, 180);
+    EXPECT_EQ(gd.skills[14].para2, 40);
+    EXPECT_EQ(gd.skills[15].para1, 400);
+    // 名称逐条与文件字节对拍（钉死表格顺序：skills[15]=空袭）。
+    auto name_raw15 = raw_name_at(kGameDataDir, 0x743C + 15 * 48);
+    EXPECT_TRUE(std::memcmp(gd.skills[15].name.data(), name_raw15.data(), 16) == 0)
+        << "skills[15].name 应与 GAME.DAT@0x743C+15*48 的 16 字节一致（空袭…）";
 }
 
 // ---- DiLei（地雷）记录对齐闸门 ----
-// RE 实证：GAME.DAT @0x7404，48B 记录 = [8B 头][16B 名@+0x08][price,damage,effect_type,apply_range]。
+// RE 实证（权威 010 模板 + DLZFULL/GAME.DAT @0x725C 逐字节抽取，铁律零坐标）：
+// 每条 48B，名称位于记录 +0x00（无前导文件头）。010 模板在 name 与 price 间误插 phantom
+// pad0，真实文件无此字段。旧结构体误加 8B header 且 name 推到 +0x08，致 weili/price 读穿相邻块。
+// 真实 10 条：土雷(60/0/100)…轰天雷(800/800/109)。本测试钉死正确对齐（@0x725C，name@+0x00）。
 TEST(GameDatContent, DiLeiNameAndParamsAligned) {
     dlzr::app::DatLoader loader(kGameDataDir);
     auto gd = loader.load_game_data();
-    ASSERT_GT(gd.mines.size(), 0u);
+    ASSERT_GT(gd.mines.size(), 9u);
 
-    auto name_raw = raw_name_at(kGameDataDir, 0x7404 + 8);
-    EXPECT_TRUE(std::memcmp(gd.mines[0].name.data(), name_raw.data(), 16) == 0)
-        << "mines[0].name 应与 GAME.DAT@0x7404+8 的 16 字节一致（轰天雷…）；"
-           "若错配为记录头，说明 DiLei 结构体仍漏 8B 文件头。";
+    // 名称位于记录 +0x00（前 8 字节不再是文件头）。
+    auto name_raw0 = raw_name_at(kGameDataDir, 0x725C);
+    EXPECT_TRUE(std::memcmp(gd.mines[0].name.data(), name_raw0.data(), 16) == 0)
+        << "mines[0].name 应与 GAME.DAT@0x725C 的 16 字节一致（土雷…）";
 
-    // 真实文件值（python 抽取 @0x7404）：price=800, damage=800, effect_type=0, apply_range=23。
-    EXPECT_EQ(gd.mines[0].price, 800);
-    EXPECT_EQ(gd.mines[0].damage, 800);
-    EXPECT_EQ(gd.mines[0].effect_type, 0);
-    EXPECT_EQ(gd.mines[0].apply_range, 23);
+    // mines[9]=轰天雷：真实文件值（python 抽取 @0x725C+9*48）：weili=800, price=800, audio_index=109。
+    auto name_raw9 = raw_name_at(kGameDataDir, 0x725C + 9 * 48);
+    EXPECT_TRUE(std::memcmp(gd.mines[9].name.data(), name_raw9.data(), 16) == 0)
+        << "mines[9].name 应与 GAME.DAT@0x725C+9*48 的 16 字节一致（轰天雷…）";
+    EXPECT_EQ(gd.mines[9].weili, 800);
+    EXPECT_EQ(gd.mines[9].price, 800);
+    EXPECT_EQ(gd.mines[9].audio_index, 109);
 }
 
 // ---- ClassType（兵种）名称偏移闸门（钉死 0x1E0，杜绝 data_dictionary 误标 0x0320）----
@@ -186,23 +198,23 @@ TEST(GameDatContent, WuPinCompatRevolverUsableByPistolClass) {
 }
 
 // ---- 端到端：技能参数对齐 → 实际效果计算（可被玩家感知的 bug 闭环）----
-// 旧 JiNeng 结构体漏 8B 头，gd.skills[5].para1 实为名称尾字节（垃圾），
-// calc_skill_effect 用垃圾算技能 HP/士气效果。修正后 para1=180, para2=40（RE 实证 @0x75E4+5*48），
-// 施毒效果应 = (para1*智力/100)*factor。本测试钉死「对齐修复真正流入效果计算」。
+// 旧 JiNeng 结构体漏 8B 头，gd.skills 整体错位 8B，para1/para2 读到名称尾字节（垃圾），
+// calc_skill_effect 用垃圾算技能 HP/士气效果。修正后 施毒=skills[14]（RE 实证 @0x743C+14*48），
+// para1=180, para2=40，施毒效果应 = (para1*智力/100)*factor。本测试钉死「对齐修复真正流入效果计算」。
 TEST(GameDatContent, SkillParamsFlowToEffectComputation) {
     dlzr::app::DatLoader loader(kGameDataDir);
     auto gd = loader.load_game_data();
-    ASSERT_GT(gd.skills.size(), 5u);
+    ASSERT_GT(gd.skills.size(), 14u);
 
-    // 施毒 (skill[5])：RE 实证 para1=180, para2=40。若仍错位，此断言必红。
-    ASSERT_EQ(gd.skills[5].para1, 180)
-        << "skills[5].para1 应=文件真实值 180（施毒）；若为名称垃圾说明仍漏 8B 头。";
-    ASSERT_EQ(gd.skills[5].para2, 40);
+    // 施毒 (skill[14])：RE 实证 para1=180, para2=40。若仍错位，此断言必红。
+    ASSERT_EQ(gd.skills[14].para1, 180)
+        << "skills[14].para1 应=文件真实值 180（施毒）；若为名称垃圾说明仍漏 8B 头。";
+    ASSERT_EQ(gd.skills[14].para2, 40);
 
     dlzr::core::People caster{};
     caster.intelligence = 100;
     int32_t skill_level = 1;            // factor = (1+7)>>3 = 1
-    auto eff = dlzr::logic::calc_skill_effect(caster, gd.skills[5], skill_level);
+    auto eff = dlzr::logic::calc_skill_effect(caster, gd.skills[14], skill_level);
     EXPECT_EQ(eff.hp_effect, (180 * 100 / 100) * 1)
         << "技能 HP 效果应 = para1*智力/100*factor = 180；若错配为垃圾则不为 180。";
     EXPECT_EQ(eff.morale_effect, (40 * 100 / 100) * 1)

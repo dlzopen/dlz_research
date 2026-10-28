@@ -257,7 +257,7 @@ TEST_F(EnemyAiDispatchTest, SupportAiTypeHealsInjuredAlly) {
     BattleCommand cmd = dispatch_type(40, 7);   // 直接驱动 ai_type 7
     ASSERT_EQ(cmd.type, BattleCommand::SKILL)
         << "ai_type 7 应支援受伤友军(SKILL medical)，而非攻击敌人";
-    EXPECT_EQ(cmd.skill_idx, 3) << "支援技能应为医疗(skill_idx=3)";
+    EXPECT_EQ(cmd.skill_idx, 2) << "支援技能应为医疗(skill_idx=2=JiNeng[2]=医疗；此前误用 3=火攻)";
     EXPECT_EQ(cmd.target_idx, A) << "支援目标须为受伤友军 A";
 }
 
@@ -319,6 +319,69 @@ TEST_F(EnemyAiDispatchTest, AiType31SkillRepositionsWhenTargetOutOfRange) {
         << "ai_type=31 技能目标超距应朝目标步进(MOVE)，而非原地空等";
     EXPECT_TRUE(cmd.target_x != 15 || cmd.target_y != 15)
         << "重定位落点须异于当前格";
+}
+
+// ===================== ai_type → skill_id 精确映射闸门（铁律零实证） =====================
+// RE 实证（output/ghidra_all/FUN_00402ddc.c）：二进制在技能 ai_type 下写 DAT_0044b240 的
+// 技能 id：31→0xf(15,空袭) / 41·42→0xd(13,暗杀) / 51·52→0xe(14,施毒) / 61·62→0xc(12,督战) /
+// 71·72→6(威慑)。副本 ai_type_to_skill_id 必须逐位复刻；任何漂移（含漏 case 62）都会红。
+// 督战(12, ATTACK_RES) 为支援类：目标=自身（恢复攻击）；其余为攻击类：目标=敌人。
+// 测试布局：E(40,team1)@(15,15)，敌 H(99,team0)@(16,15) 在施法范围。
+
+// 攻击类技能（空袭/暗杀/施毒/威慑）：敌在射程 → SKILL，skill_idx 精确匹配，目标=敌人。
+TEST_F(EnemyAiDispatchTest, AiType31MapsToSkill15AirRaid) {
+    fight_.fighters[40].behavior = 1;
+    setup_duel(40, 100, 100, 100, {{99, 1, 0}});
+    BattleCommand cmd = dispatch_type(40, 31);
+    ASSERT_EQ(cmd.type, BattleCommand::SKILL) << "ai_type=31 应为技能(空袭)";
+    EXPECT_EQ(cmd.skill_idx, 15) << "ai_type=31 → 空袭 JiNeng[15]";
+    EXPECT_EQ(cmd.target_idx, 99) << "空袭目标须为敌人";
+}
+
+TEST_F(EnemyAiDispatchTest, AiType41And42MapToSkill13Assassinate) {
+    for (int t : {41, 42}) {
+        fight_.fighters[40].behavior = 1;
+        setup_duel(40, 100, 100, 100, {{99, 1, 0}});
+        BattleCommand cmd = dispatch_type(40, t);
+        ASSERT_EQ(cmd.type, BattleCommand::SKILL) << "ai_type=" << t << " 应为技能(暗杀)";
+        EXPECT_EQ(cmd.skill_idx, 13) << "ai_type=" << t << " → 暗杀 JiNeng[13]";
+        EXPECT_EQ(cmd.target_idx, 99) << "暗杀目标须为敌人";
+    }
+}
+
+TEST_F(EnemyAiDispatchTest, AiType51And52MapToSkill14Poison) {
+    for (int t : {51, 52}) {
+        fight_.fighters[40].behavior = 1;
+        setup_duel(40, 100, 100, 100, {{99, 1, 0}});
+        BattleCommand cmd = dispatch_type(40, t);
+        ASSERT_EQ(cmd.type, BattleCommand::SKILL) << "ai_type=" << t << " 应为技能(施毒)";
+        EXPECT_EQ(cmd.skill_idx, 14) << "ai_type=" << t << " → 施毒 JiNeng[14]";
+        EXPECT_EQ(cmd.target_idx, 99) << "施毒目标须为敌人";
+    }
+}
+
+TEST_F(EnemyAiDispatchTest, AiType71And72MapToSkill6Intimidate) {
+    for (int t : {71, 72}) {
+        fight_.fighters[40].behavior = 1;
+        setup_duel(40, 100, 100, 100, {{99, 1, 0}});
+        BattleCommand cmd = dispatch_type(40, t);
+        ASSERT_EQ(cmd.type, BattleCommand::SKILL) << "ai_type=" << t << " 应为技能(威慑)";
+        EXPECT_EQ(cmd.skill_idx, 6) << "ai_type=" << t << " → 威慑 JiNeng[6]";
+        EXPECT_EQ(cmd.target_idx, 99) << "威慑目标须为敌人";
+    }
+}
+
+// 督战(12, ATTACK_RES) 为支援类：目标=自身（恢复攻击），与攻击类区分。
+// 即便敌在射程，也须以自身为目标（二进制 FUN_00402349/374 同队扫描）。
+TEST_F(EnemyAiDispatchTest, AiType61And62MapToSkill12SuperviseSelfTarget) {
+    for (int t : {61, 62}) {
+        fight_.fighters[40].behavior = 1;
+        setup_duel(40, 100, 100, 100, {{99, 1, 0}});
+        BattleCommand cmd = dispatch_type(40, t);
+        ASSERT_EQ(cmd.type, BattleCommand::SKILL) << "ai_type=" << t << " 应为技能(督战)";
+        EXPECT_EQ(cmd.skill_idx, 12) << "ai_type=" << t << " → 督战 JiNeng[12]";
+        EXPECT_EQ(cmd.target_idx, 40) << "督战目标须为自身(恢复攻击)，非敌人";
+    }
 }
 
 }  // namespace dlzr::logic

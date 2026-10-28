@@ -46,8 +46,8 @@ core::GameData DatLoader::load_game_data() const {
     //   +0x43E0: WuPin[160] (11520 B) — Items
     //   +0x7260: Material[10] (320 B)
     //   +0x73A0: DiLeiRecipe[10] (100 B)
-    //   +0x7404: DiLei[10] (480 B)                      ← 此前误用 0x725C
-    //   +0x75E4: JiNeng[16] (768 B)                     ← 此前误用 0x743C
+    //   +0x725C: DiLei[10] (480 B)                      （010 模板结构 + GAME.DAT 实证；旧 0x7404 为错位）
+    //   +0x743C: JiNeng[16] (768 B)                     （010 模板结构 + GAME.DAT 实证；旧 0x75E4 为错位）
     //   +0x78E4: SelectFanwei[16] (1296 B)
     //   +0x7DF0: ApplyFanwei[48] (9408 B)
     //   +0xA310: WuPinValid[160×96] (15360 B) — 兼容矩阵（本加载器按文件末尾 15360 字节读取）
@@ -73,12 +73,10 @@ core::GameData DatLoader::load_game_data() const {
             reader.read_bytes(offset, &gd.items[i], sizeof(core::WuPin));
         }
 
-        // DiLei (mines): 权威偏移 0x7404（证据 data_dictionary.md §3 + 真实抽取：
-        //   0x7404 处 10 条均为合法地雷名 轰天雷/补给/激励/…）。
-        // 注意：DiLei/DiLeiRecipe/JiNeng 记录的 name 字段实际位于记录 +0x08
-        //   （data_dictionary.md 已注明模板偏移偏差），本结构体 name@+0x00 仅影响名称显示，
-        //   数值字段（damage/effect_type 等）随本偏移修正后已对准正确记录。
-        constexpr size_t kDiLeiOffset = 0x7404;
+        // DiLei (mines): 权威偏移 0x725C（证据：template/dlz_game.bt DiLei 结构 +
+        //   DLZFULL/GAME.DAT @0x725C 逐字节抽取，名称位于 +0x00 无前导头；旧 0x7404 错位 0x1A8）。
+        //   地雷名 土雷/石雷/铁雷/伪装雷/蝎子雷/瘴气雷/磁电雷/风火雷/彻地雷/轰天雷。
+        constexpr size_t kDiLeiOffset = 0x725C;
         for (int i = 0; i < core::MAX_DILEI; ++i) {
             size_t offset = kDiLeiOffset + static_cast<size_t>(i) * sizeof(core::DiLei);
             if (offset + sizeof(core::DiLei) > reader.size()) break;
@@ -99,10 +97,10 @@ core::GameData DatLoader::load_game_data() const {
             reader.read_bytes(kRecipeOffset, &gd.mine_recipe, sizeof(core::DiLeiRecipe));
         }
 
-        // JiNeng (skills): 权威偏移 0x75E4（证据 data_dictionary.md §3 + 真实抽取：
-        //   0x75E4 处 16 条为合法技能名 掠夺/反间/疑兵/督战/暗杀/施毒/空袭）。
-        // （name 字段同 DiLei 位于记录 +0x08，见上注。）
-        constexpr size_t kJiNengOffset = 0x75E4;
+        // JiNeng (skills): 权威偏移 0x743C（证据：template/dlz_game.bt JiNeng 结构 +
+        //   DLZFULL/GAME.DAT @0x743C 逐字节抽取，名称位于 +0x00 无前导头；旧 0x75E4 错位 0x1A8）。
+        //   技能名 补给/激励/医疗/火攻/滚木/擂石/威慑/骚扰/破坏/掠夺/反间/疑兵/督战/暗杀/施毒/空袭。
+        constexpr size_t kJiNengOffset = 0x743C;
         for (int i = 0; i < core::MAX_SKILLS; ++i) {
             size_t offset = kJiNengOffset + static_cast<size_t>(i) * sizeof(core::JiNeng);
             if (offset + sizeof(core::JiNeng) > reader.size()) break;

@@ -163,15 +163,20 @@ static_assert(sizeof(WuPin) == 72, "WuPin must be 72 bytes");
 // Size: 48 bytes, 10 records in GAME.DAT
 // ============================================================
 struct DiLei {
-    // ⚠️ RE 实证（DLZFULL/GAME.DAT @0x7404，48B 记录步长）：与 JiNeng 同理，名称位于 +0x08，
-    // 前 8 字节为文件头。旧结构体漏头导致 name 错位；flm_index/audio_index 在原版记录中不存在，已移除。
-    std::array<int32_t, 2> header;    // +0x00 文件头 (8B) / File header
-    std::array<char, 16> name;        // +0x08 地雷名称 (GBK) / Mine name
-    int32_t price;                    // +0x18 价格 / Price
-    int32_t damage;                   // +0x1C 威力 / Damage
-    int32_t effect_type;              // +0x20 1=士气 0=体力 / 1=morale 0=HP
-    int32_t apply_range;              // +0x24 影响范围 / Application range
-    std::array<int32_t, 2> reserved;  // +0x28 保留 (凑满 48B 记录) / Padding
+    // RE 实证（权威 010 模板 template/dlz_game.bt + DLZFULL/GAME.DAT @0x725C 逐字节抽取）：
+    // 每条 48B，名称位于记录 +0x00（无前导文件头）。010 模板在 name 与 price 间误插了一个
+    // pad0，真实文件无此字段；真实字段顺序 = name[16]/weili/price/effect_type/flm_index/
+    // pad×3/audio_index。旧结构体误加 8B header 且把 name 推到 +0x08，致字段整体错位，
+    // mines[].damage 读到 flm_index 等垃圾。已移除 phantom header，字段对齐 @0x725C 实证。
+    std::array<char, 16> name;        // +0x00 地雷名称 (GBK) / Mine name
+    int32_t weili;                    // +0x10 威力 / Damage (土雷60…轰天雷800)
+    int32_t price;                    // +0x14 价格 / Price (石雷240…轰天雷800)
+    int32_t effect_type;              // +0x18 效果类型 1=士气 0=HP / 1=morale 0=HP
+    int32_t flm_index;                // +0x1C 小动画 -> flm.dat / Small animation
+    int32_t pad0;                     // +0x20 保留 / Padding
+    int32_t pad1;                     // +0x24 保留 / Padding
+    int32_t pad2;                     // +0x28 保留 / Padding
+    int32_t audio_index;              // +0x2C 音效 -> wave.dat / Sound (100..109)
 };
 static_assert(sizeof(DiLei) == 48, "DiLei must be 48 bytes");
 
@@ -180,19 +185,21 @@ static_assert(sizeof(DiLei) == 48, "DiLei must be 48 bytes");
 // Size: 40 bytes, 16 records in GAME.DAT
 // ============================================================
 struct JiNeng {
-    // ⚠️ RE 实证（DLZFULL/GAME.DAT @0x75E4，48B 记录步长）：每条记录前 8 字节为文件头，
-    // 名称位于 +0x08（非 +0x00）。旧结构体漏掉 8 字节头，导致 name 与 para1.. 整体错位 8 字节，
-    // calc_skill_effect 读到的 para1/para2 实为名称尾字节（垃圾），技能 HP/士气效果计算错误。
-    // flm_index/audio_index 在原版 48B 记录中**不存在**（仅 para1..anm_index 共 6 个 int32），
-    // 故已从结构体移除；其动画/音效用途在 main.cpp 改为 Tier-B 默认 -1（见 main.cpp）。
-    std::array<int32_t, 2> header;    // +0x00 文件头 (8B, 语义未 RE) / File header (2×int32)
-    std::array<char, 16> name;        // +0x08 技能名称 (GBK) / Skill name
-    int32_t para1;                    // +0x18 效果参数1 / Effect parameter 1
-    int32_t para2;                    // +0x1C 效果参数2 / Effect parameter 2
-    int32_t type;                     // +0x20 技能类型 / Skill type (FormulaType)
-    int32_t select_range;             // +0x24 选择范围 / Selection range
-    int32_t apply_range;              // +0x28 应用范围 / Application range
-    int32_t anm_index;                // +0x2C 大动画 -> anm.dat (-1=无) / Large animation
+    // RE 实证（权威 010 模板 template/dlz_game.bt 的 JiNeng 结构 + DLZFULL/GAME.DAT @0x743C
+    // 逐字节抽取，铁律零坐标）：每条 48B，名称位于记录 +0x00（无前导文件头）。
+    // 010 模板字段顺序：name[16]/para1/para2/type/select_range/apply_range/anm_index/
+    // flm_index/audio_index（共 1+8 个 int32 = 16+32 = 48B）。
+    // 旧结构体误加 8B header 并把 name 推到 +0x08，致 para1/para2/type 整体错位 8B
+    // （读取到名称尾字节，calc_skill_effect 用垃圾算技能效果）。已移除 phantom header。
+    std::array<char, 16> name;        // +0x00 技能名称 (GBK) / Skill name
+    int32_t para1;                    // +0x10 效果参数1 / Effect parameter 1
+    int32_t para2;                    // +0x14 效果参数2 / Effect parameter 2
+    int32_t type;                     // +0x18 技能类型 / Skill type (JiNengType 0..10)
+    int32_t select_range;             // +0x1C 选择范围 / Selection range
+    int32_t apply_range;              // +0x20 应用范围 / Application range
+    int32_t anm_index;                // +0x24 大动画 -> anm.dat (-1=无) / Large animation
+    int32_t flm_index;                // +0x28 小动画 -> flm.dat / Small animation
+    int32_t audio_index;              // +0x2C 音效 -> wave.dat / Sound
 };
 static_assert(sizeof(JiNeng) == 48, "JiNeng must be 48 bytes");
 

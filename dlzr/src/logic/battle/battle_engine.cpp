@@ -664,6 +664,9 @@ void BattleEngine::execute_skill(const BattleCommand& cmd) {
         if (cmd.target_idx >= 0) {
             auto& target = state_.fighters[cmd.target_idx];
 
+            // ATTACK_RES(10, 督战)：恢复攻击（FUN_004138ea case 0xa）。干净层无"攻击禁止"态，
+            // 故不施加 HP/士气效果（避免误伤友军），仅记事件；其余类型按 para1/para2 施加 HP/士气效果。
+            if (skill.type != 10) {
             if (effect.hp_effect > 0) {
                 target.stats.current_hp -= effect.hp_effect;
             } else if (effect.hp_effect < 0) {
@@ -685,6 +688,7 @@ void BattleEngine::execute_skill(const BattleCommand& cmd) {
             }
 
             target.stats.morale = std::max(0, target.stats.morale - effect.morale_effect);
+            }
 
             BattleEvent ev;
             ev.type = BattleEvent::SKILL_USED;
@@ -762,7 +766,7 @@ void BattleEngine::check_mine_trigger(int32_t fighter_idx, int32_t grid_x, int32
 
     if (mine.mine_type > 0 && mine.mine_type < core::MAX_DILEI) {
         const auto& dilei = game_->mines[mine.mine_type];
-        int32_t damage = dilei.damage;
+        int32_t damage = dilei.weili;
 
         if (dilei.effect_type == 0) {
             fighter.stats.current_hp -= damage;
@@ -1166,11 +1170,11 @@ BattleCommand BattleEngine::dispatch_ai_type(int32_t fighter_idx, int ai_type) {
     // 23c=1 仅移动），绝不可路由到技能。此前误路由 ai_try_skill 属类别错配。
     case 21: case 22: case 23:
         return ai_chase(fighter_idx);
-    // —— 技能类（DAT_0044b23c=1/2，技能 id 0xc/0xd/0xe/6/0xf；干净层 ai_try_skill 按可用旗标择一）——
-    // 二进制 ai_type 31(0xf)/41(0xd)/42(0xd)/51(0xe)/52(0xe)/61(0xc)/71(6)/72(6) 为技能，
-    // 此前误路由 ai_attack_in_place 属类别错配（二进制技能非普攻）。
-    case 31: case 41: case 42: case 51: case 52: case 61: case 71: case 72:
-        return ai_try_skill(fighter_idx);
+    // —— 技能类（DAT_0044b23c=1/2，技能 id 0xc/0xd/0xe/6/0xf；干净层按 ai_type 精确选技能）——
+    // 二进制 ai_type 31(0xf)/41(0xd)/42(0xd)/51(0xe)/52(0xe)/61(0xc)/62(0xc)/71(6)/72(6) 为技能，
+    // 此前误路由 ai_attack_in_place 属类别错配（二进制技能非普攻）；现改为按 ai_type→skill_id 精确施放。
+    case 31: case 41: case 42: case 51: case 52: case 61: case 62: case 71: case 72:
+        return ai_try_skill(fighter_idx, ai_type);
     // —— 支援类（同队扫描 FUN_004018fb/004018cc/FUN_00401c73/FUN_00401c44：
     // 选中友军格 + 施放支援技能；干净层以 ai_support_ally 治疗受伤友军近似）——
     case 7: case 8: case 17: case 18:
@@ -1215,12 +1219,29 @@ int32_t BattleEngine::find_ally_to_heal(int32_t fighter_idx) const {
     return best_idx;
 }
 
-BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
+// 二进制 ai_type → JiNeng 索引（FUN_00402ddc 写 DAT_0044b240 的技能 id）：
+//   31→15(空袭) 41/42→13(暗杀) 51/52→14(施毒) 61/62→12(督战) 71/72→6(威慑)。
+// 证据 output/ghidra_all/FUN_00402ddc.c：case 0x1f/0x29/0x2a/0x33/0x34/0x3d/0x3e/0x47/0x48
+// 直接写 DAT_0044b240 = 0xf/0xd/0xe/0xc/6。
+static int32_t ai_type_to_skill_id(int32_t ai_type) {
+    switch (ai_type) {
+        case 31: return 15;  // 空袭 / Air raid
+        case 41: case 42: return 13;  // 暗杀 / Assassination
+        case 51: case 52: return 14;  // 施毒 / Poison
+        case 61: case 62: return 12;  // 督战 / Supervise (restore attack)
+        case 71: case 72: return 6;   // 威慑 / Intimidate
+        default: return -1;
+    }
+}
+
+BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx, int32_t ai_type) {
     BattleCommand cmd;
     cmd.type = BattleCommand::NONE;
     cmd.fighter_idx = fighter_idx;
 
-    const auto& fp = get_fight_people(fighter_idx);
+    int32_t skill_id = ai_type_to_skill_id(ai_type);
+    if (skill_id < 0 || skill_id >= core::MAX_SKILLS) return cmd;
+
     const auto& fighter = state_.fighters[fighter_idx];
 
     // 二进制每个技能 ai_type 都「移动到目标格 + 在该格施放」(FUN_004043ea: 移动到
@@ -1228,101 +1249,51 @@ BattleCommand BattleEngine::ai_try_skill(int32_t fighter_idx) {
     // 下一回合进入范围再施放，而非原地空等(NONE)。move_x/move_y 记录最近有效技能目标格。
     int32_t move_x = -1, move_y = -1;
 
-    if (fp.skill_medical > 0) {
-        int32_t heal_target = find_ally_to_heal(fighter_idx);
-        if (heal_target >= 0) {
-            const auto& target = state_.fighters[heal_target];
-            int32_t dx = fighter.grid_x - target.grid_x;
-            int32_t dy = fighter.grid_y - target.grid_y;
-            if (dx * dx + dy * dy <= 4) {
-                cmd.type = BattleCommand::SKILL;
-                cmd.skill_idx = 3;  // 医疗 / Medical skill index
-                cmd.target_idx = heal_target;
-                cmd.target_x = target.grid_x;
-                cmd.target_y = target.grid_y;
-                return cmd;
-            }
-            move_x = target.grid_x; move_y = target.grid_y;  // 超距→记为移动目标
-        }
+    // 督战(12, ATTACK_RES) 为支援类：目标=自身（恢复攻击；二进制 FUN_00402349/374 同队扫描）。
+    // 其余（空袭/暗杀/施毒/威慑）为攻击类：目标=敌人（FUN_00402b0c/00401fd0 敌方扫描）。
+    if (skill_id == 12) {
+        cmd.type = BattleCommand::SKILL;
+        cmd.skill_idx = 12;  // 督战 / Supervise
+        cmd.target_idx = fighter_idx;
+        cmd.target_x = fighter.grid_x;
+        cmd.target_y = fighter.grid_y;
+        return cmd;
     }
 
-    if (fp.skill_fire > 0 || fp.skill_poison > 0) {
-        int32_t best_target = -1;
-        int32_t best_score = -1;
-        int32_t best_near = -1;
-        int32_t best_near_d = INT32_MAX;
-        int32_t atk_range = get_attack_range(fighter_idx);
+    // 攻击类技能（空袭/暗杀/施毒/威慑）：选最值得敌人目标（受伤越重越优先）。
+    int32_t atk_range = get_attack_range(fighter_idx);
+    int32_t best_target = -1;
+    int32_t best_score = -1;
+    int32_t best_near = -1;
+    int32_t best_near_d = INT32_MAX;
 
-        for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
-            const auto& enemy = state_.fighters[i];
-            if (!enemy.is_active || enemy.stats.current_hp <= 0) continue;
-            if (enemy.team == fighter.team) continue;
+    for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
+        const auto& enemy = state_.fighters[i];
+        if (!enemy.is_active || enemy.stats.current_hp <= 0) continue;
+        if (enemy.team == fighter.team) continue;
 
-            int32_t dx = fighter.grid_x - enemy.grid_x;
-            int32_t dy = fighter.grid_y - enemy.grid_y;
-            int32_t d2 = dx * dx + dy * dy;
-            if (d2 < best_near_d) { best_near_d = d2; best_near = i; }
-            if (d2 > atk_range * atk_range + 4) continue;
+        int32_t dx = fighter.grid_x - enemy.grid_x;
+        int32_t dy = fighter.grid_y - enemy.grid_y;
+        int32_t d2 = dx * dx + dy * dy;
+        if (d2 < best_near_d) { best_near_d = d2; best_near = i; }
+        if (d2 > atk_range * atk_range + 4) continue;
 
-            int32_t score = enemy.stats.max_hp - enemy.stats.current_hp;
-            if (score > best_score) {
-                best_score = score;
-                best_target = i;
-            }
-        }
-
-        if (best_target >= 0) {
-            const auto& target = state_.fighters[best_target];
-            cmd.type = BattleCommand::SKILL;
-            cmd.skill_idx = (fp.skill_fire > 0) ? 4 : 15;  // 火攻=4, 施毒=15
-            cmd.target_idx = best_target;
-            cmd.target_x = target.grid_x;
-            cmd.target_y = target.grid_y;
-            return cmd;
-        }
-        if (best_near >= 0) {
-            move_x = state_.fighters[best_near].grid_x;
-            move_y = state_.fighters[best_near].grid_y;
-        }
+        int32_t score = enemy.stats.max_hp - enemy.stats.current_hp;
+        if (score > best_score) { best_score = score; best_target = i; }
     }
 
-    if (fp.skill_intimidate > 0) {
-        int32_t atk_range = get_attack_range(fighter_idx);
-        int32_t best_target = -1;
-        int32_t best_morale = -1;
-        int32_t best_near = -1;
-        int32_t best_near_d = INT32_MAX;
-
-        for (int i = 0; i < BattleState::MAX_FIGHTERS; ++i) {
-            const auto& enemy = state_.fighters[i];
-            if (!enemy.is_active || enemy.stats.current_hp <= 0) continue;
-            if (enemy.team == fighter.team) continue;
-
-            int32_t dx = fighter.grid_x - enemy.grid_x;
-            int32_t dy = fighter.grid_y - enemy.grid_y;
-            int32_t d2 = dx * dx + dy * dy;
-            if (d2 < best_near_d) { best_near_d = d2; best_near = i; }
-            if (d2 > atk_range * atk_range + 4) continue;
-
-            if (enemy.stats.morale > best_morale) {
-                best_morale = enemy.stats.morale;
-                best_target = i;
-            }
-        }
-
-        if (best_target >= 0) {
-            const auto& target = state_.fighters[best_target];
-            cmd.type = BattleCommand::SKILL;
-            cmd.skill_idx = 7;  // 威慑 / Intimidate skill index
-            cmd.target_idx = best_target;
-            cmd.target_x = target.grid_x;
-            cmd.target_y = target.grid_y;
-            return cmd;
-        }
-        if (best_near >= 0) {
-            move_x = state_.fighters[best_near].grid_x;
-            move_y = state_.fighters[best_near].grid_y;
-        }
+    if (best_target >= 0) {
+        const auto& target = state_.fighters[best_target];
+        cmd.type = BattleCommand::SKILL;
+        cmd.skill_idx = skill_id;  // 精确二进制技能 id（15/13/14/6）
+        cmd.target_idx = best_target;
+        cmd.target_x = target.grid_x;
+        cmd.target_y = target.grid_y;
+        return cmd;
+    }
+    if (best_near >= 0) {
+        move_x = state_.fighters[best_near].grid_x;
+        move_y = state_.fighters[best_near].grid_y;
     }
 
     // 有效技能目标存在但超距 → 朝目标步进(MOVE)，下一回合进入范围再施放。
@@ -1358,7 +1329,7 @@ BattleCommand BattleEngine::ai_support_ally(int32_t fighter_idx) {
     // FUN_00401c73/00401c44 同队扫描选中友军格，再施放支援技能（治疗/增益）。
     // 干净层以"治疗受伤友军(medical)"近似支援行为：
     //   · 无 medical 技能 → 不成支援（二进制同队扫描也需支援目标存在）→ NONE 回退；
-    //   · 有受伤友军且在其施法范围 → SKILL(medical, skill_idx=3，与 ai_try_skill 一致)；
+    //   · 有受伤友军且在其施法范围 → SKILL(medical, skill_idx=2=医疗；JiNeng[2]=医疗/TILI_SHIQI_ADD)；
     //   · 有受伤友军但超距 → 朝友军移动一步（二进制：移动到友军格后施放）；
     //   · 无受伤友军 → NONE 回退（与 FUN_004018fb 返 -1 一致）。
     const auto& fp = get_fight_people(fighter_idx);
@@ -1373,7 +1344,7 @@ BattleCommand BattleEngine::ai_support_ally(int32_t fighter_idx) {
     int32_t dy = self.grid_y - target.grid_y;
     if (dx * dx + dy * dy <= 4) {
         cmd.type = BattleCommand::SKILL;
-        cmd.skill_idx = 3;  // 医疗 / Medical（与 ai_try_skill 同索引）
+        cmd.skill_idx = 2;  // 医疗 / Medical（JiNeng[2]=医疗，TILI_SHIQI_ADD；此前误用 3=火攻）
         cmd.target_idx = ally;
         cmd.target_x = target.grid_x;
         cmd.target_y = target.grid_y;

@@ -1370,7 +1370,7 @@ int main(int argc, char* argv[]) {
                         if (tx >= 0 && ty >= 0) {
                             battle_anim_controller.queue_impact(tx, ty);
                             battle_anim_controller.queue_damage_number(
-                                tx, ty, gsm.game_data().mines[mi].damage);
+                                tx, ty, gsm.game_data().mines[mi].weili);
                         }
                     }
                 } else if (ev.type == dlzr::logic::BattleEvent::FIGHTER_DIED) {
