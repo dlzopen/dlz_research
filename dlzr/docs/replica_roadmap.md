@@ -15,7 +15,7 @@
 | 命名诚实度 | `g_const_`=**0**、`gs_00` 残留=**0**；但真·游戏语义名 ≈498/1914，其余为内容分类/区域占位/子结构偏移占位 | `renames.csv` 分类拆分 |
 | 结构化区域 | **Fighter / People / ClassType / Skill** 四块字段偏移与二进制 1:1（GameState 成员） | `types.hpp`/`game_data.hpp`/`battle_state.hpp` + Ghidra 对拍 |
 | 战斗数值内核（pilot） | **14 个战斗数值函数已语义化转发** + 独立 `ref_*` 逐指令转录 + 随机对拍 **100,000 次 0 分歧**；另建 **clean↔oracle 跨层差分**（9 例 + `SkillGridDiff` 3 例，含 1–2 万次随机对拍 0 分歧） | `replica/battle_calc.cpp`、`tests/test_battle_calc.cpp`、`tests/test_cross_layer_diff.cpp`、`tests/test_skill_grid_diff.cpp` |
-| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 355 总 / 354 PASS / 1 已知失败**（`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` —— AI 技能旗标门控未实现，Tier-B 近似缺口，见 §6#10 + §8）。含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock | `cmake --build` 已验证（2026-10-28） |
+| 构建健康 | 主程序 `dlzr.exe` + `dlzr_tests` **构建 0 error**；**测试 358 总 / 357 PASS / 1 已知失败**（`EnemyAiDispatchTest.Behavior12MovesWhenNoSkill` —— AI 技能旗标门控未实现，Tier-B 近似缺口，见 §6#10 + §8）。含真实 IO 框架 `DatIoTest` **14/14**，用真实 `DLZFULL` 二进制驱动，非 mock | `cmake --build` 已验证（2026-10-28） |
 | 架构分层 | **转录/oracle 层**（`src/replica/`）+ **clean 复刻层**（`src/core` `src/logic` `src/presentation` `src/platform`） | `find dlzr/src -maxdepth 2 -type d` |
 | clean 层已有结构 | `logic/`：battle, combat, dialogue, save, level(LevelEventManager), promotion, character, crafting, forging, hidden_level, strategic；`presentation/`：battle, dialogue, title, opening, ending, ui, font, animation, audio 等 | 同名 `.hpp` 存在 |
 
@@ -105,25 +105,35 @@
 - **缺口（候选 2，见 §7）**：上述数据/令牌层尚未"接进游戏主循环整屏渲染"（Tier A 强约束：逐字配色不得自由发挥）。
 - **交付物 / 闸（G-Subsys + G-TierA 局部）**：`logic/dialogue/dialogue_manager.hpp` 驱动整屏渲染 + 令牌/配色差分测试。
 
-### Phase 7 — UI / 渲染 / 输入 / 动画
-- 范围：`presentation/{ui,font,animation,battle,...}` + `platform/{sdl3,mock,web}` + `app/{input,scene}`。DDraw 表面、`g_ddraw` vtable（无 NULL 检查，须真链 dsound/ddraw）换成 SDL3。
-- **Tier A**：UI 坐标、时序动画、输入响应逐项核对。
+### Phase 7 — UI / 渲染 / 输入 / 动画 🟡 渲染器已实现，中央输入/场景分发待抽（2026-10-28 实测）
+- 范围：`presentation/{ui,font,animation,battle,dialogue,strategic,title,...}` + `platform/{sdl3,mock,web}` + `app/{input,scene}`。DDraw 表面换成 SDL3（已链）。
+- **已完成（渲染器层）**：`presentation/` 下 title / character_select / dialogue / battle(renderer+input+animation+result) / strategic / town / shop / forging / promotion / ending / opening / save_load 等 renderer 均已实现并接入 `main.cpp`；`platform/sdl3` + `platform/mock` 双后端就绪（`platform/web` 空）。`test_dialogue_render.cpp` 已覆盖对话令牌逐字配色（Tier A 局部）。
+- **缺口（真实未闭环）**：`src/app/input/` 与 `src/app/scene/` **目录为空**——中央输入分发与场景栈（scene stack）尚未抽成独立模块，现由 `main.cpp` 1825 行内联 `while(running){ poll_event → 对话/选择/模式分发 → 各 renderer.render }` 承载。Tier A 的**逐项 UI 坐标 / 时序动画 / 输入命中**核对须真机运行 + 逐 renderer RE 坐标证据（如 `battle_state.hpp:174` 已钉 `(14,32)+48px` 视口原点），无头测试无法覆盖像素级。
+- **Tier A 已钉坐标锚（可单测部分）**：战斗视口像素原点 `(14,32)`、格 `48px`（`FUN_0041be02.c:31`）；标题/对话版面坐标已由 `test_dialogue_scene.cpp` 覆盖。剩余 renderer 坐标须逐个补 Tier A 测试。
 
-### Phase 8 — 模式状态机 / 主循环 🟡 真实数据装载点已收口，Mode 跳转行为测试未建
-- 范围：`current_mode@0x7db4e8`、Mode150 战后链路、`LevelEventManager` 重写控制流（替代原版状态机）。
-- **已完成（数据装载闭环）**：真实数据经 `DatLoader` 统一装载点已收口进 `GameState`（§9.3② 闭环，续4#2）。
-- **缺口**：各 Mode 跳转的 Tier A 行为测试尚未建立（依赖候选 1/2 子系统接入后补）。
-- **交付物 / 闸（G-TierA）**：状态机 + 各 Mode 跳转的 Tier A 行为测试。
+### Phase 8 — 模式状态机 / 主循环 🟢 状态机已实现 + 集成闸已建（2026-10-28）
+- 范围：`current_mode@0x7db4e8`、30+ `GameMode` 枚举（`logic/game_state_manager.hpp`）、Mode150 战后链路、`LevelEventManager` 重写控制流（替代原版状态机）。
+- **已完成**：
+  - `GameStateManager` 状态机已落地（`init` 真装载 `load_game_data()`+`load_towns()`、置 TITLE；`set_mode` 模式跳转；score/ending/difficulty/fight-completion 均有单测 `test_game_state_manager.cpp`）。
+  - **真实数据→模式切换→战斗装配→单位驱动的无头集成闸已建**（`tests/test_game_flow.cpp` 3 测全绿）：① `GameStateManager` 初始 TITLE 且装载真实兵种表、TITLE→CHARACTER_SELECT→STRATEGIC_MAP→BATTLE→RESET 跳转一致；② 真实 fight0/map0 装载、map0=20×26、BattleEngine 装配后单位部署/网格地形缓冲按地图尺寸填充/未结束；③ 驱动一个已部署玩家单位算移动范围并移动到可达格、不崩溃不自洽破坏。
+  - 主循环 + 模式→场景分发已在 `src/main.cpp`（1825 行）接好全部 renderer/子系统（title/character_select/dialogue/battle/strategic/town/shop/forging/save_load/ending/opening…），`gsm.mode()`/`set_mode()` 驱动。
+- **缺口（真·Tier A 行为测试）**：main.cpp 内联的"模式→场景分发"逻辑仍以单体脚本形式存在，未抽成可单测 `GameApp` 类；各 Mode 的**逐项坐标/时序/输入** Tier A 核对需真机运行 + 逐 renderer RE 证据（无头测试只能验逻辑脊、验不了渲染像素）。这是 Phase 8/11 剩余验收缺口，非阻塞当前绿态。
+- **交付物 / 闸（G-TierA）**：状态机 + 集成脊已满足；各 Mode 跳转的逐像素 Tier A 行为测试列为后续（依赖 GUI 实证）。
 
-### Phase 9 — 存读档
-- 范围：`save_game@0x7d01c8`（29 块 fwrite），基址以本工程 save/load 代码重派生（`.bt` 注释地址不可信）。
-- **交付物**：与原始存档字节级可互读（或等价语义）。
+### Phase 9 — 存读档 ✅ 已闭环（2026-10-28 实测）
+- 范围：`save_game@0x7d01c8`（28 块 fwrite，85072B），基址以本工程 `app/resource/save_loader.cpp` 块尺寸顺序派生（`.bt` 注释地址不可信，已按 §8.2 纪律以代码派生为准）。
+- **已验证（铁律零，真实二进制）**：`test_save_system.cpp` 4 测全绿 —— ① 真实 `DLZFULL/save0.dat` = 85072B = 28 块累加；② 解码 `people[0]` 字节 == 文件偏移 17696 原始字节且 = 孙悟空/主角(faction=0)；③ `peek_save_info` 对齐真实偏移（fight_index=5 / town=7 / gold=0）；④ 加载→另存→重载无损往返（people/fighter/map_grid 字节一致）。§8.2 审计红旗已由"⚠️ 待复核"转"✅ 已验证"。
+- **交付物 / 闸（G-Subsys）**：与原始存档字节级可互读，已满足。残诚实项：`save_loader.cpp` 写侧部分块（surface_table/story_progress/string_table）填零，未模拟原版运行期填充——属 Tier-B 等价，不影响读回保真。
 
-### Phase 10 — 音频（MCI/DSound → SDL3/WebAudio）
+### Phase 10 — 音频（MCI/DSound → SDL3/WebAudio）🟡 抽象层已落地（2026-10-28 实测）
 - 范围：MCI 音频 API、DSound；换成 `platform/` 抽象。
+- **已完成**：`presentation/audio/audio_manager.hpp/.cpp` 已实现 `init(Platform&, DatLoader&, dir)` + `play_sound(wave_id)` / `play_music` / `stop_sound` / `is_playing` / `stop_bgm`；`platform/platform.hpp` 已定义 `play_sound(pcm,size,rate)` / `play_music` / `stop_music` 抽象，`platform/sdl3` + `platform/mock` 双后端；`DatLoader::load_wave_clip`（WAVE 装载）已接入（§8.2 合规审计 ✅）；`main.cpp` 已 `audio.init(...)` 装配。
+- **缺口**：各事件→音效/音乐的**触发映射**（哪个事件播哪个 wave_id / BGM）须 RE 实证 + 真机验证 PCM 播放路径；无头测试只能验装载不崩，验不了"听到声音"。属 Tier-B 等价近似，非阻塞当前绿态。
 
 ### Phase 11 — 集成与全量 Tier A 1:1
 - 范围：主循环串起所有子系统，玩家可感知清单逐项核对（Mode 跳转、对话配色、UI 坐标、时序、输入、数值）。
+- **逻辑集成脊已建闸（2026-10-28）**：`tests/test_game_flow.cpp` 用真实 `DLZFULL` 数据驱动「装载→`GameStateManager` 模式切换→`BattleEngine` 装配→单位移动」整条链路，证明无头下核心流程自洽不崩溃（见 Phase 8）。
+- **缺口**：渲染层 Tier A（逐像素 UI 坐标/时序动画/输入命中）须真机运行 + 逐 renderer RE 坐标证据方可逐项核对，无头测试无法覆盖像素级保真；此为 Phase 11 收官前的最终验收缺口。
 
 ---
 
@@ -178,7 +188,7 @@
 - **全局真语义**：≈**498/1914**（描述性名，证据强度不等）；其余为内容分类/区域占位/子结构偏移占位。
 - **子系统**：battle 子系统 pilot **已完成跨层差分闭环**——`FUN_004138ea` 16 分支 `replica`(oracle) ↔ `logic/battle`(clean) 0 分歧（SkillGridDiff 5 测含 CellDeathExp + 9 例 BattleCalc 跨层，全量 119/119 PASS）。T3-core（`FUN_0041307f` per-cell 伤害核心）与 T3-b（死亡/经验循环）已并入同闸门。剩余为 3-pass 管线集成（setup→`FUN_0041307f`→`FUN_004138ea` 的跨 pass 缓冲持久化）与 case 9 仓库语义，作为残余集成项。
 - 口径由 `scripts/build_re_map.py` 刷新，状态以 `output/re_map/status_summary.md` 为准。
-- **构建门总口径（2026-10-28 刷新）**：`dlzr_tests` 全量 **355 用例 / 354 PASS**（含 `DatIoTest` 真实 IO 14/14）；1 已知失败 `Behavior12MovesWhenNoSkill`（AI 技能旗标门控未实现，Tier-B 近似缺口，非回归），见 §6#10 + §8。Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
+- **构建门总口径（2026-10-28 续）**：`dlzr_tests` 全量 **358 用例 / 357 PASS**（含 `DatIoTest` 真实 IO 14/14 + 新增 `GameFlow` 集成闸 3 测）；1 已知失败 `Behavior12MovesWhenNoSkill`（AI 技能旗标门控未实现，Tier-B 近似缺口，非回归），见 §6#10 + §8。Phase 5（战斗内移动范围 1:1）+ 候选 2（Phase 6 对话整屏驱动）+ Phase 8/11（无头集成脊）+ Phase 9（存读档字节保真）已收口；函数语义化覆盖率仍为 **14/755**（pilot），741 桩待候选 3 规模化深化。
 
 ---
 
@@ -311,7 +321,7 @@
 | `DatLoader::load_dialogues` — TXT.DAT | `dlz_game.bt`（对话段） | XOR 0x51 GBK，593 条 | ✅ 合规 | 令牌 AA/BB/CC/DD 配色 `FUN_004061df.c` |
 | `DatLoader::load_wave_clip` — WAVE | `dlz_wave.bt` | — | ✅ 合规 | — |
 | `DatLoader::load_game_data` — 物资/地形修正/移动代价 | `dlz_game.bt` / `dlz_people.bt` | 地形修正 `0x475ab0`；兵种×物品 `0x95eb88` | ✅ 合规 | — |
-| 存读档 `save_game` | `dlz_save.bt` | `.bt` 注释地址不可信，须以 save/load 代码重派生 | ⚠️ 待复核 | 与 §9 存读档 Phase 关联；模板仅作字段名参考，基址自派生 |
+| 存读档 `save_game` | `dlz_save.bt` | `.bt` 注释地址不可信，以 save/load 代码（块尺寸顺序派生）重派生 | ✅ 已验证（2026-10-28） | 28 块 × 85072B 与真实 `DLZFULL/save0.dat` 字节级吻合；`test_save_system.cpp` 4 测（28 块布局 / people[0]=孙悟空 / peek(fight=5,town=7,gold=0) / 无损往返）全绿；模板仅作字段名参考 |
 
 > 说明：`dlz_game.bt` 已获用户实证的平面布局校验（Material/DiLeiRecipe/DiLei/JiNeng/SelectFanwei/ApplyFanWei 全部与真实文件解码一致），为全工程最可靠的数据 schema 基准。
 
